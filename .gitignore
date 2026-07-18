@@ -1,0 +1,28 @@
+# Node
+node_modules/
+dist/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Environment variables
+.env
+.env.*
+
+# Project media
+media/*
+projects/*
+exports/*
+
+# Keep folders
+!media/.gitkeep
+!projects/.gitkeep
+!exports/.gitkeep
+
+# macOS
+.DS_Store
+
+# Editors
+.vscode/
