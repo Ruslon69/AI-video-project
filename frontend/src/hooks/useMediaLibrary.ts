@@ -5,7 +5,8 @@ import {
   uploadVideoScenes,
   uploadVideoTranscription,
 } from '../services/api'
-import type { MediaFileRejection, MediaItem, MediaType } from '../types'
+import type { MediaFileRejection, MediaItem, MediaStatus, MediaType } from '../types'
+import { getMediaStatusProgress } from '../utils/mediaStatus'
 
 const MAX_ACTIVE_PREVIEW_REQUESTS = 2
 const MAX_ACTIVE_SCENE_REQUESTS = 1
@@ -42,6 +43,8 @@ function createMediaId(file: File) {
 }
 
 function createMediaItem(file: File, type: MediaType): MediaItem {
+  const status: MediaStatus = type === 'video' ? 'uploading' : 'ready'
+
   return {
     id: createMediaId(file),
     file,
@@ -50,9 +53,10 @@ function createMediaItem(file: File, type: MediaType): MediaItem {
     size: file.size,
     lastModified: file.lastModified,
     objectUrl: URL.createObjectURL(file),
-    state: type === 'video' ? 'processing' : 'ready',
+    status,
+    progress: getMediaStatusProgress(status),
     metadata: null,
-    error: null,
+    errorMessage: undefined,
     previewState: type === 'video' ? 'idle' : 'ready',
     previews: null,
     previewError: null,
@@ -62,6 +66,19 @@ function createMediaItem(file: File, type: MediaType): MediaItem {
     transcriptionState: type === 'video' ? 'idle' : 'ready',
     transcription: null,
     transcriptionError: null,
+  }
+}
+
+function applyMediaStatus(
+  item: MediaItem,
+  status: MediaStatus,
+  errorMessage?: string,
+): MediaItem {
+  return {
+    ...item,
+    status,
+    progress: getMediaStatusProgress(status),
+    errorMessage,
   }
 }
 
@@ -166,7 +183,7 @@ export function useMediaLibrary(
             latestItems.map((latestItem) =>
               latestItem.id === item.id
                 ? {
-                    ...latestItem,
+                    ...applyMediaStatus(latestItem, 'ready'),
                     transcription,
                     transcriptionState: 'ready',
                     transcriptionError: null,
@@ -185,7 +202,11 @@ export function useMediaLibrary(
             latestItems.map((latestItem) =>
               latestItem.id === item.id
                 ? {
-                    ...latestItem,
+                    ...applyMediaStatus(
+                      latestItem,
+                      'error',
+                      'Не удалось расшифровать речь.',
+                    ),
                     transcriptionState: 'error',
                     transcriptionError: 'Не удалось расшифровать речь.',
                   }
@@ -220,7 +241,7 @@ export function useMediaLibrary(
       latestItems.map((latestItem) =>
         latestItem.id === item.id
           ? {
-              ...latestItem,
+              ...applyMediaStatus(latestItem, 'transcribing'),
               transcriptionState: 'processing',
               transcriptionError: null,
             }
@@ -264,7 +285,7 @@ export function useMediaLibrary(
             latestItems.map((latestItem) =>
               latestItem.id === item.id
                 ? {
-                    ...latestItem,
+                    ...applyMediaStatus(latestItem, 'transcribing'),
                     scenes,
                     sceneState: 'ready',
                     sceneError: null,
@@ -284,7 +305,11 @@ export function useMediaLibrary(
             latestItems.map((latestItem) =>
               latestItem.id === item.id
                 ? {
-                    ...latestItem,
+                    ...applyMediaStatus(
+                      latestItem,
+                      'error',
+                      'Не удалось определить смены сцен.',
+                    ),
                     sceneState: 'error',
                     sceneError: 'Не удалось определить смены сцен.',
                   }
@@ -319,7 +344,7 @@ export function useMediaLibrary(
       latestItems.map((latestItem) =>
         latestItem.id === item.id
           ? {
-              ...latestItem,
+              ...applyMediaStatus(latestItem, 'scene-detection'),
               sceneState: 'processing',
               sceneError: null,
             }
@@ -363,7 +388,7 @@ export function useMediaLibrary(
             latestItems.map((latestItem) =>
               latestItem.id === item.id
                 ? {
-                    ...latestItem,
+                    ...applyMediaStatus(latestItem, 'scene-detection'),
                     previews,
                     previewState: 'ready',
                     previewError: null,
@@ -383,7 +408,11 @@ export function useMediaLibrary(
             latestItems.map((latestItem) =>
               latestItem.id === item.id
                 ? {
-                    ...latestItem,
+                    ...applyMediaStatus(
+                      latestItem,
+                      'error',
+                      'Не удалось создать кадры предпросмотра.',
+                    ),
                     previewState: 'error',
                     previewError:
                       'Не удалось создать кадры предпросмотра.',
@@ -498,16 +527,23 @@ export function useMediaLibrary(
       const controller = new AbortController()
       metadataControllersRef.current.set(item.id, controller)
 
+      updateItems((latestItems) =>
+        latestItems.map((latestItem) =>
+          latestItem.id === item.id
+            ? applyMediaStatus(latestItem, 'metadata')
+            : latestItem,
+        ),
+      )
+
       void uploadVideoMetadata(item.file, controller.signal)
         .then((metadata) => {
           updateItems((latestItems) =>
             latestItems.map((latestItem) =>
               latestItem.id === item.id
                 ? {
-                    ...latestItem,
+                    ...applyMediaStatus(latestItem, 'preview'),
                     metadata,
-                    state: 'ready',
-                    error: null,
+                    errorMessage: undefined,
                     previewState: 'processing',
                     previewError: null,
                   }
@@ -527,10 +563,11 @@ export function useMediaLibrary(
             latestItems.map((latestItem) =>
               latestItem.id === item.id
                 ? {
-                    ...latestItem,
-                    state: 'error',
-                    error:
+                    ...applyMediaStatus(
+                      latestItem,
+                      'error',
                       'Не удалось прочитать метаданные. Файл можно оставить в библиотеке.',
+                    ),
                   }
                 : latestItem,
             ),

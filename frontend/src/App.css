@@ -754,7 +754,7 @@ textarea:focus-visible {
   background: var(--selected);
 }
 
-.media-library-item[data-state='error'] {
+.media-library-item[data-status='error'] {
   border-color: rgba(216, 83, 83, 0.45);
 }
 
@@ -807,6 +807,41 @@ textarea:focus-visible {
 }
 
 .media-library-details {
+  overflow-wrap: anywhere;
+}
+
+.media-library-progress-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.media-library-progress {
+  display: block;
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--surface);
+}
+
+.media-library-progress-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 180ms ease;
+}
+
+.media-library-progress-value,
+.media-library-error {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.media-library-error {
+  color: var(--danger);
   overflow-wrap: anywhere;
 }
 

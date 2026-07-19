@@ -5,18 +5,13 @@ import {
   formatFileSize,
   formatNumber,
 } from '../../utils/mediaFormat'
+import { getMediaStatusLabel } from '../../utils/mediaStatus'
 import { getSourceOrientation } from '../../utils/projectSettings'
 
 const mediaTypeLabels: Record<MediaItem['type'], string> = {
   video: 'Видео',
   image: 'Изображение',
   audio: 'Аудио',
-}
-
-const stateLabels: Record<MediaItem['state'], string> = {
-  ready: 'Готово',
-  processing: 'Обработка',
-  error: 'Ошибка',
 }
 
 const orientationLabels = {
@@ -53,7 +48,7 @@ export function MediaLibraryList({
           key={item.id}
           className="media-library-item"
           data-active={activeItemId === item.id}
-          data-state={item.state}
+          data-status={item.status}
         >
           <button
             type="button"
@@ -67,8 +62,31 @@ export function MediaLibraryList({
               {mediaTypeLabels[item.type]} · {formatFileSize(item.size)}
             </span>
             <span className="media-library-state">
-              {stateLabels[item.state]}
+              {getMediaStatusLabel(item.status)}
             </span>
+            <span className="media-library-progress-row">
+              <span
+                className="media-library-progress"
+                role="progressbar"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={item.progress}
+                aria-label={`${item.filename}: ${getMediaStatusLabel(item.status)}`}
+              >
+                <span
+                  className="media-library-progress-fill"
+                  style={{ width: `${item.progress}%` }}
+                />
+              </span>
+              <span className="media-library-progress-value">
+                {item.progress}%
+              </span>
+            </span>
+            {item.status === 'error' && item.errorMessage ? (
+              <span className="media-library-error" role="status">
+                {item.errorMessage}
+              </span>
+            ) : null}
             <MediaItemMetadata item={item} />
           </button>
           <button
@@ -130,12 +148,8 @@ function MediaLibraryThumb({ item }: { item: MediaItem }) {
 }
 
 function MediaItemMetadata({ item }: { item: MediaItem }) {
-  if (item.state === 'processing') {
+  if (item.status === 'uploading' || item.status === 'metadata') {
     return <span className="media-library-details">Читаем метаданные...</span>
-  }
-
-  if (item.error) {
-    return <span className="media-library-details">{item.error}</span>
   }
 
   if (item.type !== 'video' || !item.metadata) {

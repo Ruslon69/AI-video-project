@@ -189,7 +189,7 @@ function VideoMetadataPanel({
     )
   }
 
-  if (item.state === 'processing') {
+  if (item.status === 'uploading' || item.status === 'metadata') {
     return (
       <div className="metadata-panel" aria-live="polite">
         <p className="section-label">Метаданные видео</p>
@@ -198,12 +198,12 @@ function VideoMetadataPanel({
     )
   }
 
-  if (item.error) {
+  if (item.status === 'error' && item.errorMessage) {
     return (
       <div className="metadata-panel metadata-panel-error" aria-live="polite">
         <p className="section-label">Метаданные видео</p>
         <p className="metadata-message">
-          Не удалось прочитать метаданные видео. Можно выбрать другой файл или попробовать снова позже.
+          {item.errorMessage}
         </p>
       </div>
     )

@@ -68,7 +68,14 @@ export type VideoMetadata = {
 
 export type MediaType = 'video' | 'image' | 'audio'
 
-export type MediaProcessingState = 'ready' | 'processing' | 'error'
+export type MediaStatus =
+  | 'uploading'
+  | 'metadata'
+  | 'preview'
+  | 'scene-detection'
+  | 'transcribing'
+  | 'ready'
+  | 'error'
 
 export type MediaFileRejection = {
   filename: string
@@ -142,9 +149,10 @@ export type MediaItem = {
   size: number
   lastModified: number
   objectUrl: string
-  state: MediaProcessingState
+  status: MediaStatus
+  progress: number
   metadata: VideoMetadata | null
-  error: string | null
+  errorMessage?: string
   previewState: VideoPreviewState
   previews: VideoPreviews | null
   previewError: string | null
