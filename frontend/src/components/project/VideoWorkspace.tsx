@@ -1,19 +1,30 @@
-import type { EditingSubstage, MediaItem, VideoMetadata } from '../../types'
+import type {
+  EditingSubstage,
+  MediaItem,
+  ProjectOutputSettings,
+  VideoMetadata,
+} from '../../types'
 import {
   formatBitrate,
   formatDuration,
   formatFileSize,
   formatNumber,
 } from '../../utils/mediaFormat'
+import {
+  getSourceOrientation,
+  isVideoCompatibleWithTarget,
+} from '../../utils/projectSettings'
 import { statusLabels } from '../../utils/projectState'
 
 type VideoWorkspaceProps = {
   activeItem: MediaItem | null
+  outputSettings: ProjectOutputSettings
   selectedSubstage: EditingSubstage
 }
 
 export function VideoWorkspace({
   activeItem,
+  outputSettings,
   selectedSubstage,
 }: VideoWorkspaceProps) {
   return (
@@ -34,7 +45,7 @@ export function VideoWorkspace({
       <p className="workspace-file">
         Активный подэтап: {selectedSubstage.title}
       </p>
-      <VideoMetadataPanel item={activeItem} />
+      <VideoMetadataPanel item={activeItem} outputSettings={outputSettings} />
     </section>
   )
 }
@@ -81,7 +92,13 @@ function MediaPreview({ item }: { item: MediaItem | null }) {
   )
 }
 
-function VideoMetadataPanel({ item }: { item: MediaItem | null }) {
+function VideoMetadataPanel({
+  item,
+  outputSettings,
+}: {
+  item: MediaItem | null
+  outputSettings: ProjectOutputSettings
+}) {
   if (!item) {
     return null
   }
@@ -133,10 +150,15 @@ function VideoMetadataPanel({ item }: { item: MediaItem | null }) {
   }
 
   const metadata: VideoMetadata = item.metadata
+  const isCompatible = isVideoCompatibleWithTarget(
+    metadata,
+    outputSettings.aspectRatio,
+  )
   const items = [
     ['Файл', metadata.filename],
     ['Длительность', formatDuration(metadata.duration)],
     ['Размер кадра', `${metadata.width} x ${metadata.height}`],
+    ['Ориентация', getOrientationLabel(metadata)],
     ['FPS', formatNumber(metadata.fps)],
     ['Кодек', metadata.codec],
     ['Битрейт', formatBitrate(metadata.bitrate)],
@@ -146,6 +168,21 @@ function VideoMetadataPanel({ item }: { item: MediaItem | null }) {
   return (
     <div className="metadata-panel">
       <p className="section-label">Метаданные видео</p>
+      <div
+        className="compatibility-status"
+        data-compatible={isCompatible}
+      >
+        <strong>{isCompatible ? 'Compatible' : 'Adaptation required'}</strong>
+        <span>
+          Цель: {outputSettings.aspectRatio} · {outputSettings.resolution.width} x{' '}
+          {outputSettings.resolution.height}
+        </span>
+        {!isCompatible ? (
+          <p>
+            The source video will be adapted to the selected output format during editing.
+          </p>
+        ) : null}
+      </div>
       <dl className="metadata-grid">
         {items.map(([label, value]) => (
           <div key={label} className="metadata-row">
@@ -156,4 +193,14 @@ function VideoMetadataPanel({ item }: { item: MediaItem | null }) {
       </dl>
     </div>
   )
+}
+
+function getOrientationLabel(metadata: VideoMetadata) {
+  const orientationLabels = {
+    vertical: 'Вертикальная',
+    horizontal: 'Горизонтальная',
+    square: 'Квадратная',
+  }
+
+  return orientationLabels[getSourceOrientation(metadata)]
 }

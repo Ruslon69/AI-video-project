@@ -12,7 +12,11 @@ import { useMediaLibrary } from './hooks/useMediaLibrary'
 import { useLocalStorageState } from './hooks/useLocalStorageState'
 import { useTheme } from './hooks/useTheme'
 import { checkBackendHealth } from './services/api'
-import type { TargetOutputDuration } from './types'
+import type { ProjectOutputSettings } from './types'
+import {
+  applyPlatformDefaults,
+  defaultProjectOutputSettings,
+} from './utils/projectSettings'
 import {
   createReviewVersion,
   ensureProjectState,
@@ -37,8 +41,9 @@ function App() {
   const [assistantDraftQuestion, setAssistantDraftQuestion] = useState('')
   const [openHelpId, setOpenHelpId] = useState<string | null>(null)
   const [isBackendConnected, setIsBackendConnected] = useState(false)
-  const [targetOutputDuration, setTargetOutputDuration] =
-    useState<TargetOutputDuration>(60)
+  const [outputSettings, setOutputSettings] = useState<ProjectOutputSettings>(
+    defaultProjectOutputSettings,
+  )
   const {
     items: mediaItems,
     activeItem: activeMediaItem,
@@ -95,6 +100,16 @@ function App() {
     }))
   }
 
+  const handleOutputSettingsChange = (settings: ProjectOutputSettings) => {
+    setOutputSettings((currentSettings) => {
+      if (settings.platform !== currentSettings.platform) {
+        return applyPlatformDefaults(settings, settings.platform)
+      }
+
+      return settings
+    })
+  }
+
   return (
     <div className="app-shell">
       <AppHeader
@@ -114,14 +129,14 @@ function App() {
           expandedStageIds={projectState.expandedStageIds}
           mediaItems={mediaItems}
           activeMediaItemId={activeMediaItemId}
-          targetOutputDuration={targetOutputDuration}
+          outputSettings={outputSettings}
           stats={stats}
           openHelpId={openHelpId}
           onFilesAdd={addFiles}
           onMediaSelect={selectItem}
           onMediaRemove={removeItem}
           onMediaClear={clearLibrary}
-          onTargetOutputDurationChange={setTargetOutputDuration}
+          onOutputSettingsChange={handleOutputSettingsChange}
           onStageSelect={handleStageSelect}
           onStageToggle={handleStageToggle}
           onHelpOpenChange={(helpId, isOpen) =>
@@ -140,6 +155,7 @@ function App() {
         />
         <VideoWorkspace
           activeItem={activeMediaItem}
+          outputSettings={outputSettings}
           selectedSubstage={selectedSubstage}
         />
         <ReviewPanel

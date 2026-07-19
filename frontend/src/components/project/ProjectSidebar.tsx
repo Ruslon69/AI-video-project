@@ -2,22 +2,18 @@ import type { ChangeEvent } from 'react'
 import type {
   EditingStage,
   MediaItem,
+  ProjectOutputSettings,
   ProjectStats,
-  TargetOutputDuration,
+  TargetAspectRatio,
+  TargetPlatform,
 } from '../../types'
+import {
+  customAspectRatioOptions,
+  targetDurationOptions,
+  targetPlatformOptions,
+} from '../../utils/projectSettings'
 import { EditingStageList } from './EditingStageList'
 import { MediaLibraryList } from './MediaLibraryList'
-
-const targetDurationOptions: Array<{
-  value: TargetOutputDuration
-  label: string
-}> = [
-  { value: 30, label: '30 секунд' },
-  { value: 60, label: '60 секунд' },
-  { value: 180, label: '3 минуты' },
-  { value: 300, label: '5 минут' },
-  { value: 600, label: '10 минут' },
-]
 
 type ProjectSidebarProps = {
   stages: EditingStage[]
@@ -26,14 +22,14 @@ type ProjectSidebarProps = {
   expandedStageIds: string[]
   mediaItems: MediaItem[]
   activeMediaItemId: string | null
-  targetOutputDuration: TargetOutputDuration
+  outputSettings: ProjectOutputSettings
   stats: ProjectStats
   openHelpId: string | null
   onFilesAdd: (files: FileList) => void
   onMediaSelect: (itemId: string) => void
   onMediaRemove: (itemId: string) => void
   onMediaClear: () => void
-  onTargetOutputDurationChange: (duration: TargetOutputDuration) => void
+  onOutputSettingsChange: (settings: ProjectOutputSettings) => void
   onStageSelect: (stageId: string, substageId?: string) => void
   onStageToggle: (stageId: string) => void
   onHelpOpenChange: (helpId: string, isOpen: boolean) => void
@@ -46,14 +42,14 @@ export function ProjectSidebar({
   expandedStageIds,
   mediaItems,
   activeMediaItemId,
-  targetOutputDuration,
+  outputSettings,
   stats,
   openHelpId,
   onFilesAdd,
   onMediaSelect,
   onMediaRemove,
   onMediaClear,
-  onTargetOutputDurationChange,
+  onOutputSettingsChange,
   onStageSelect,
   onStageToggle,
   onHelpOpenChange,
@@ -78,9 +74,24 @@ export function ProjectSidebar({
   }
 
   const handleTargetDurationChange = (event: ChangeEvent<HTMLSelectElement>) => {
-    onTargetOutputDurationChange(
-      Number(event.target.value) as TargetOutputDuration,
-    )
+    onOutputSettingsChange({
+      ...outputSettings,
+      duration: Number(event.target.value) as ProjectOutputSettings['duration'],
+    })
+  }
+
+  const handlePlatformChange = (event: ChangeEvent<HTMLSelectElement>) => {
+    onOutputSettingsChange({
+      ...outputSettings,
+      platform: event.target.value as TargetPlatform,
+    })
+  }
+
+  const handleAspectRatioChange = (event: ChangeEvent<HTMLSelectElement>) => {
+    onOutputSettingsChange({
+      ...outputSettings,
+      aspectRatio: event.target.value as TargetAspectRatio,
+    })
   }
 
   return (
@@ -91,20 +102,56 @@ export function ProjectSidebar({
         <p className="project-format">
           TikTok · Reels · YouTube Shorts · до 10 минут
         </p>
-        <label className="project-setting" htmlFor="target-output-duration">
-          <span>Целевая длительность</span>
-          <select
-            id="target-output-duration"
-            value={targetOutputDuration}
-            onChange={handleTargetDurationChange}
-          >
-            {targetDurationOptions.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </label>
+        <div className="project-settings-grid">
+          <label className="project-setting" htmlFor="target-output-duration">
+            <span>Целевая длительность</span>
+            <select
+              id="target-output-duration"
+              value={outputSettings.duration}
+              onChange={handleTargetDurationChange}
+            >
+              {targetDurationOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="project-setting" htmlFor="target-platform">
+            <span>Платформа</span>
+            <select
+              id="target-platform"
+              value={outputSettings.platform}
+              onChange={handlePlatformChange}
+            >
+              {targetPlatformOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="project-setting" htmlFor="target-aspect-ratio">
+            <span>Соотношение сторон</span>
+            <select
+              id="target-aspect-ratio"
+              value={outputSettings.aspectRatio}
+              onChange={handleAspectRatioChange}
+              disabled={outputSettings.platform !== 'custom'}
+            >
+              {customAspectRatioOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <p className="project-output-summary">
+            {outputSettings.resolution.width} x {outputSettings.resolution.height} ·{' '}
+            {outputSettings.container} · {outputSettings.videoCodec} ·{' '}
+            {outputSettings.audioCodec}
+          </p>
+        </div>
         <div className="progress-block" aria-label="Общий прогресс проекта">
           <div className="progress-line">
             <span>Прогресс</span>

@@ -70,7 +70,30 @@ export type MediaType = 'video' | 'image' | 'audio'
 
 export type MediaProcessingState = 'ready' | 'processing' | 'error'
 
-export type TargetOutputDuration = 30 | 60 | 180 | 300 | 600
+export type TargetOutputDuration = 30 | 60 | 90 | 120 | 180 | 300 | 600
+
+export type TargetPlatform =
+  | 'tiktok'
+  | 'instagram_reels'
+  | 'youtube_shorts'
+  | 'custom'
+
+export type TargetAspectRatio = '9:16' | '16:9' | '1:1' | '4:5'
+
+export type SourceOrientation = 'vertical' | 'horizontal' | 'square'
+
+export type ProjectOutputSettings = {
+  duration: TargetOutputDuration
+  platform: TargetPlatform
+  aspectRatio: TargetAspectRatio
+  resolution: {
+    width: number
+    height: number
+  }
+  container: 'MP4'
+  videoCodec: 'H.264'
+  audioCodec: 'AAC'
+}
 
 export type MediaItem = {
   id: string

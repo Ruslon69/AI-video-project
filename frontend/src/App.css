@@ -141,10 +141,16 @@
 .project-setting {
   display: grid;
   gap: 7px;
-  margin: 0 0 14px;
+  margin: 0;
   color: var(--text-muted);
   font-size: 13px;
   font-weight: 750;
+}
+
+.project-settings-grid {
+  display: grid;
+  gap: 10px;
+  margin: 0 0 14px;
 }
 
 .project-setting select {
@@ -155,6 +161,18 @@
   color: var(--text);
   background: var(--panel-strong);
   font: inherit;
+}
+
+.project-setting select:disabled {
+  cursor: not-allowed;
+  opacity: 0.72;
+}
+
+.project-output-summary {
+  margin: 0;
+  color: var(--text-subtle);
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 .selected-file,
@@ -867,6 +885,36 @@ textarea:focus-visible {
   margin: 0;
   color: var(--text-muted);
   font-size: 14px;
+}
+
+.compatibility-status {
+  display: grid;
+  gap: 5px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 10px;
+  background: var(--panel-strong);
+}
+
+.compatibility-status[data-compatible='true'] {
+  border-color: rgba(47, 180, 124, 0.45);
+}
+
+.compatibility-status[data-compatible='false'] {
+  border-color: rgba(216, 139, 45, 0.5);
+}
+
+.compatibility-status strong {
+  color: var(--text-strong);
+  font-size: 13px;
+}
+
+.compatibility-status span,
+.compatibility-status p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 .review-panel {

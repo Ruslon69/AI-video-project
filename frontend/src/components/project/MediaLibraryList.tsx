@@ -5,6 +5,7 @@ import {
   formatFileSize,
   formatNumber,
 } from '../../utils/mediaFormat'
+import { getSourceOrientation } from '../../utils/projectSettings'
 
 const mediaTypeLabels: Record<MediaItem['type'], string> = {
   video: 'Видео',
@@ -16,6 +17,12 @@ const stateLabels: Record<MediaItem['state'], string> = {
   ready: 'Готово',
   processing: 'Обработка',
   error: 'Ошибка',
+}
+
+const orientationLabels = {
+  vertical: 'Вертикальное',
+  horizontal: 'Горизонтальное',
+  square: 'Квадратное',
 }
 
 type MediaLibraryListProps = {
@@ -94,7 +101,8 @@ function MediaItemMetadata({ item }: { item: MediaItem }) {
     <span className="media-library-details">
       {formatDuration(item.metadata.duration)} · {item.metadata.width} x{' '}
       {item.metadata.height} · {formatNumber(item.metadata.fps)} FPS ·{' '}
-      {item.metadata.codec} · {formatBitrate(item.metadata.bitrate)}
+      {item.metadata.codec} · {formatBitrate(item.metadata.bitrate)} ·{' '}
+      {orientationLabels[getSourceOrientation(item.metadata)]}
     </span>
   )
 }
