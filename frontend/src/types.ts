@@ -70,6 +70,11 @@ export type MediaType = 'video' | 'image' | 'audio'
 
 export type MediaProcessingState = 'ready' | 'processing' | 'error'
 
+export type MediaFileRejection = {
+  filename: string
+  reason: string
+}
+
 export type VideoPreviewState = 'idle' | 'processing' | 'ready' | 'error'
 
 export type VideoSceneDetectionState = 'idle' | 'processing' | 'ready' | 'error'

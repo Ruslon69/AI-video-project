@@ -716,6 +716,24 @@ textarea:focus-visible {
   margin-top: 14px;
 }
 
+.upload-rejections {
+  display: grid;
+  gap: 4px;
+  margin-top: 10px;
+  border: 1px solid rgba(216, 139, 45, 0.45);
+  border-radius: 7px;
+  padding: 8px;
+  color: var(--text-muted);
+  background: var(--surface-soft);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.upload-rejections p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
 .media-library-list {
   display: grid;
   gap: 8px;

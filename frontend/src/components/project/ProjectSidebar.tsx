@@ -1,6 +1,7 @@
 import type { ChangeEvent } from 'react'
 import type {
   EditingStage,
+  MediaFileRejection,
   MediaItem,
   ProjectOutputSettings,
   ProjectStats,
@@ -22,6 +23,7 @@ type ProjectSidebarProps = {
   expandedStageIds: string[]
   mediaItems: MediaItem[]
   activeMediaItemId: string | null
+  fileRejections: MediaFileRejection[]
   outputSettings: ProjectOutputSettings
   stats: ProjectStats
   openHelpId: string | null
@@ -42,6 +44,7 @@ export function ProjectSidebar({
   expandedStageIds,
   mediaItems,
   activeMediaItemId,
+  fileRejections,
   outputSettings,
   stats,
   openHelpId,
@@ -174,11 +177,20 @@ export function ProjectSidebar({
           className="visually-hidden"
           id="media-upload"
           type="file"
-          accept="video/*,image/*,audio/*"
+          accept="video/*,video/quicktime,.mov,image/*,audio/*"
           multiple
           onChange={handleFileChange}
           aria-label="Выбрать медиафайлы"
         />
+        {fileRejections.length > 0 ? (
+          <div className="upload-rejections" role="status" aria-live="polite">
+            {fileRejections.map((rejection) => (
+              <p key={`${rejection.filename}-${rejection.reason}`}>
+                {rejection.filename}: {rejection.reason}
+              </p>
+            ))}
+          </div>
+        ) : null}
         <div className="media-library-head">
           <p className="section-label">Медиатека</p>
           <button

@@ -5,11 +5,12 @@ import {
   uploadVideoScenes,
   uploadVideoTranscription,
 } from '../services/api'
-import type { MediaItem, MediaType } from '../types'
+import type { MediaFileRejection, MediaItem, MediaType } from '../types'
 
 const MAX_ACTIVE_PREVIEW_REQUESTS = 2
 const MAX_ACTIVE_SCENE_REQUESTS = 1
 const MAX_ACTIVE_TRANSCRIPTION_REQUESTS = 1
+const FALLBACK_VIDEO_EXTENSIONS = new Set(['mp4', 'mov', 'm4v', 'webm', 'mkv'])
 
 function getMediaType(file: File): MediaType | null {
   if (file.type.startsWith('video/')) {
@@ -24,6 +25,11 @@ function getMediaType(file: File): MediaType | null {
     return 'audio'
   }
 
+  const extension = file.name.split('.').pop()?.toLowerCase()
+  if (extension && FALLBACK_VIDEO_EXTENSIONS.has(extension)) {
+    return 'video'
+  }
+
   return null
 }
 
@@ -35,10 +41,35 @@ function createMediaId(file: File) {
   return `${getDuplicateKey(file)}-${crypto.randomUUID()}`
 }
 
+function createMediaItem(file: File, type: MediaType): MediaItem {
+  return {
+    id: createMediaId(file),
+    file,
+    filename: file.name,
+    type,
+    size: file.size,
+    lastModified: file.lastModified,
+    objectUrl: URL.createObjectURL(file),
+    state: type === 'video' ? 'processing' : 'ready',
+    metadata: null,
+    error: null,
+    previewState: type === 'video' ? 'idle' : 'ready',
+    previews: null,
+    previewError: null,
+    sceneState: type === 'video' ? 'idle' : 'ready',
+    scenes: null,
+    sceneError: null,
+    transcriptionState: type === 'video' ? 'idle' : 'ready',
+    transcription: null,
+    transcriptionError: null,
+  }
+}
+
 export function useMediaLibrary(
   onBackendConnectionChange: (isConnected: boolean) => void,
 ) {
   const [items, setItems] = useState<MediaItem[]>([])
+  const [fileRejections, setFileRejections] = useState<MediaFileRejection[]>([])
   const [activeItemId, setActiveItemId] = useState<string | null>(null)
   const itemsRef = useRef<MediaItem[]>([])
   const isMountedRef = useRef(true)
@@ -385,7 +416,7 @@ export function useMediaLibrary(
     pumpPreviewQueue()
   }, [pumpPreviewQueue])
 
-  useEffect(() => () => {
+  const cleanupMediaLibrary = useCallback(() => {
     isMountedRef.current = false
     clearQueuedMediaWork()
 
@@ -410,112 +441,108 @@ export function useMediaLibrary(
     }
   }, [clearQueuedMediaWork])
 
+  useEffect(() => {
+    isMountedRef.current = true
+
+    return cleanupMediaLibrary
+  }, [cleanupMediaLibrary])
+
   const addFiles = useCallback((fileList: FileList | File[]) => {
     const files = Array.from(fileList)
+    const existingKeys = new Set(itemsRef.current.map((item) => (
+      getDuplicateKey(item.file)
+    )))
+    const addedItems: MediaItem[] = []
+    const addedVideoItems: MediaItem[] = []
+    const rejectedFiles: MediaFileRejection[] = []
 
-    updateItems((currentItems) => {
-      const existingKeys = new Set(currentItems.map((item) => (
-        getDuplicateKey(item.file)
-      )))
+    for (const file of files) {
+      const type = getMediaType(file)
+      const duplicateKey = getDuplicateKey(file)
 
-      const nextItems = [...currentItems]
-      const addedVideoItems: MediaItem[] = []
-
-      for (const file of files) {
-        const type = getMediaType(file)
-        const duplicateKey = getDuplicateKey(file)
-
-        if (!type || existingKeys.has(duplicateKey)) {
-          continue
-        }
-
-        existingKeys.add(duplicateKey)
-
-        const item: MediaItem = {
-          id: createMediaId(file),
-          file,
+      if (!type) {
+        rejectedFiles.push({
           filename: file.name,
-          type,
-          size: file.size,
-          lastModified: file.lastModified,
-          objectUrl: URL.createObjectURL(file),
-          state: type === 'video' ? 'processing' : 'ready',
-          metadata: null,
-          error: null,
-          previewState: type === 'video' ? 'idle' : 'ready',
-          previews: null,
-          previewError: null,
-          sceneState: type === 'video' ? 'idle' : 'ready',
-          scenes: null,
-          sceneError: null,
-          transcriptionState: type === 'video' ? 'idle' : 'ready',
-          transcription: null,
-          transcriptionError: null,
-        }
-
-        nextItems.push(item)
-
-        if (type === 'video') {
-          addedVideoItems.push(item)
-        }
+          reason: 'Формат файла не поддерживается.',
+        })
+        continue
       }
 
-      if (!activeItemId && nextItems.length > 0) {
-        setActiveItemId(nextItems[0].id)
+      if (existingKeys.has(duplicateKey)) {
+        continue
       }
 
-      for (const item of addedVideoItems) {
-        const controller = new AbortController()
-        metadataControllersRef.current.set(item.id, controller)
+      existingKeys.add(duplicateKey)
 
-        void uploadVideoMetadata(item.file, controller.signal)
-          .then((metadata) => {
-            updateItems((latestItems) =>
-              latestItems.map((latestItem) =>
-                latestItem.id === item.id
-                  ? {
-                      ...latestItem,
-                      metadata,
-                      state: 'ready',
-                      error: null,
-                      previewState: 'processing',
-                      previewError: null,
-                    }
-                  : latestItem,
-              ),
-            )
-            onBackendConnectionChange(true)
+      const item = createMediaItem(file, type)
+      addedItems.push(item)
 
-            enqueuePreview(item)
-          })
-          .catch((error: unknown) => {
-            if (controller.signal.aborted) {
-              return
-            }
-
-            updateItems((latestItems) =>
-              latestItems.map((latestItem) =>
-                latestItem.id === item.id
-                  ? {
-                      ...latestItem,
-                      state: 'error',
-                      error:
-                        'Не удалось прочитать метаданные. Файл можно оставить в библиотеке.',
-                    }
-                  : latestItem,
-              ),
-            )
-            if (!(error instanceof DOMException && error.name === 'AbortError')) {
-              onBackendConnectionChange(false)
-            }
-          })
-          .finally(() => {
-            metadataControllersRef.current.delete(item.id)
-          })
+      if (type === 'video') {
+        addedVideoItems.push(item)
       }
+    }
 
-      return nextItems
-    })
+    setFileRejections(rejectedFiles)
+
+    if (addedItems.length === 0) {
+      return
+    }
+
+    updateItems((currentItems) => [...currentItems, ...addedItems])
+
+    if (!activeItemId && itemsRef.current.length === 0) {
+      setActiveItemId(addedItems[0].id)
+    }
+
+    for (const item of addedVideoItems) {
+      const controller = new AbortController()
+      metadataControllersRef.current.set(item.id, controller)
+
+      void uploadVideoMetadata(item.file, controller.signal)
+        .then((metadata) => {
+          updateItems((latestItems) =>
+            latestItems.map((latestItem) =>
+              latestItem.id === item.id
+                ? {
+                    ...latestItem,
+                    metadata,
+                    state: 'ready',
+                    error: null,
+                    previewState: 'processing',
+                    previewError: null,
+                  }
+                : latestItem,
+            ),
+          )
+          onBackendConnectionChange(true)
+
+          enqueuePreview(item)
+        })
+        .catch((error: unknown) => {
+          if (controller.signal.aborted) {
+            return
+          }
+
+          updateItems((latestItems) =>
+            latestItems.map((latestItem) =>
+              latestItem.id === item.id
+                ? {
+                    ...latestItem,
+                    state: 'error',
+                    error:
+                      'Не удалось прочитать метаданные. Файл можно оставить в библиотеке.',
+                  }
+                : latestItem,
+            ),
+          )
+          if (!(error instanceof DOMException && error.name === 'AbortError')) {
+            onBackendConnectionChange(false)
+          }
+        })
+        .finally(() => {
+          metadataControllersRef.current.delete(item.id)
+        })
+    }
   }, [
     activeItemId,
     enqueuePreview,
@@ -547,6 +574,7 @@ export function useMediaLibrary(
 
   const clearLibrary = useCallback(() => {
     clearQueuedMediaWork()
+    setFileRejections([])
 
     for (const item of itemsRef.current) {
       abortMediaWork(item.id)
@@ -566,6 +594,7 @@ export function useMediaLibrary(
     items,
     activeItem,
     activeItemId,
+    fileRejections,
     addFiles,
     selectItem,
     removeItem,

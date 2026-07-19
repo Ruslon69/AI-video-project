@@ -48,6 +48,7 @@ function App() {
     items: mediaItems,
     activeItem: activeMediaItem,
     activeItemId: activeMediaItemId,
+    fileRejections,
     addFiles,
     selectItem,
     removeItem,
@@ -129,6 +130,7 @@ function App() {
           expandedStageIds={projectState.expandedStageIds}
           mediaItems={mediaItems}
           activeMediaItemId={activeMediaItemId}
+          fileRejections={fileRejections}
           outputSettings={outputSettings}
           stats={stats}
           openHelpId={openHelpId}
