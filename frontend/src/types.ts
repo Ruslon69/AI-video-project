@@ -84,7 +84,12 @@ export type MediaFileRejection = {
 
 export type VideoPreviewState = 'idle' | 'processing' | 'ready' | 'error'
 
-export type VideoSceneDetectionState = 'idle' | 'processing' | 'ready' | 'error'
+export type VideoSceneDetectionState =
+  | 'idle'
+  | 'processing'
+  | 'ready'
+  | 'timeout'
+  | 'error'
 
 export type VideoTranscriptionState = 'idle' | 'processing' | 'ready' | 'error'
 
@@ -99,8 +104,16 @@ export type VideoPreviews = {
 }
 
 export type VideoScenes = {
-  scene_count: number
-  timestamps: number[]
+  outcome: 'scenes_detected' | 'no_scene_changes'
+  scenes: VideoScene[]
+  processingTimeMs?: number | null
+}
+
+export type VideoScene = {
+  id: string
+  start: number
+  end: number
+  duration: number
 }
 
 export type VideoTranscriptSegment = {

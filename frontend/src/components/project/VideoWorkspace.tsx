@@ -221,14 +221,14 @@ function VideoMetadataPanel({
   const items = [
     ['Файл', metadata.filename],
     ['Длительность', formatDuration(metadata.duration)],
-    ['Размер кадра', `${metadata.width} x ${metadata.height}`],
+    ['Размер кадра', `${metadata.width}×${metadata.height}`],
     ['Ориентация', getOrientationLabel(metadata)],
     ['FPS', formatNumber(metadata.fps)],
     ['Кодек', metadata.codec],
     ['Битрейт', formatBitrate(metadata.bitrate)],
     ['Размер файла', formatFileSize(metadata.file_size)],
   ]
-  const sceneTimestamps = item.scenes?.timestamps ?? []
+  const sceneSegments = item.scenes?.scenes ?? []
   const transcription = item.transcription
 
   return (
@@ -261,8 +261,8 @@ function VideoMetadataPanel({
         <div className="scene-summary-head">
           <p className="section-label">Сцены</p>
           <strong>
-            {item.sceneState === 'ready'
-              ? `${item.scenes?.scene_count ?? 0}`
+            {item.sceneState === 'ready' && item.scenes?.outcome === 'scenes_detected'
+              ? `${sceneSegments.length}`
               : item.sceneState === 'processing'
                 ? '...'
                 : '0'}
@@ -271,18 +271,25 @@ function VideoMetadataPanel({
         {item.sceneState === 'processing' ? (
           <p className="metadata-message">Определяем смены сцен...</p>
         ) : null}
+        {item.sceneState === 'ready' && item.scenes?.outcome === 'scenes_detected' ? (
+          <p className="metadata-message">
+            Scenes detected: {sceneSegments.length}
+          </p>
+        ) : null}
+        {item.sceneState === 'ready' && item.scenes?.outcome === 'no_scene_changes' ? (
+          <p className="metadata-message">No scene changes detected</p>
+        ) : null}
         {item.sceneError ? (
           <p className="metadata-message metadata-message-error">
             {item.sceneError}
           </p>
         ) : null}
-        {item.sceneState === 'ready' && sceneTimestamps.length === 0 ? (
-          <p className="metadata-message">Смены сцен не найдены.</p>
-        ) : null}
-        {sceneTimestamps.length > 0 ? (
-          <div className="scene-timestamp-list" aria-label="Таймкоды сцен">
-            {sceneTimestamps.map((timestamp) => (
-              <span key={timestamp}>{formatDuration(timestamp)}</span>
+        {item.scenes?.outcome === 'scenes_detected' ? (
+          <div className="scene-timestamp-list" aria-label="Сегменты сцен">
+            {sceneSegments.map((scene) => (
+              <span key={scene.id}>
+                {formatDuration(scene.start)} - {formatDuration(scene.end)}
+              </span>
             ))}
           </div>
         ) : null}

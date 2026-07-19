@@ -24,6 +24,10 @@ class Settings:
     )
     ffprobe_timeout_seconds: int = _get_int_env("FFPROBE_TIMEOUT_SECONDS", 30)
     ffmpeg_timeout_seconds: int = _get_int_env("FFMPEG_TIMEOUT_SECONDS", 45)
+    scene_detection_timeout_seconds: int = _get_int_env(
+        "SCENE_DETECTION_TIMEOUT_SECONDS",
+        300,
+    )
     preview_max_width: int = 480
     preview_jpeg_quality: int = 3
     preview_max_count: int = 8

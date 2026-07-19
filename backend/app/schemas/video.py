@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel
 
 
@@ -22,9 +24,17 @@ class VideoPreviews(BaseModel):
     previews: list[VideoPreviewFrame]
 
 
+class VideoScene(BaseModel):
+    id: str
+    start: float
+    end: float
+    duration: float
+
+
 class VideoScenes(BaseModel):
-    scene_count: int
-    timestamps: list[float]
+    outcome: Literal["scenes_detected", "no_scene_changes"]
+    scenes: list[VideoScene]
+    processingTimeMs: int | None = None
 
 
 class VideoTranscriptSegment(BaseModel):

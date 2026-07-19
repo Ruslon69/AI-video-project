@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
+  ApiError,
   uploadVideoMetadata,
   uploadVideoPreviews,
   uploadVideoScenes,
@@ -296,26 +297,28 @@ export function useMediaLibrary(
           onBackendConnectionChange(true)
           enqueueTranscription(item)
         })
-        .catch(() => {
+        .catch((error: unknown) => {
           if (controller.signal.aborted) {
             return
           }
+
+          const isTimeout = error instanceof ApiError && error.status === 504
+          const sceneError = isTimeout
+            ? 'Scene detection timed out'
+            : 'Scene detection failed'
 
           updateItems((latestItems) =>
             latestItems.map((latestItem) =>
               latestItem.id === item.id
                 ? {
-                    ...applyMediaStatus(
-                      latestItem,
-                      'error',
-                      'Не удалось определить смены сцен.',
-                    ),
-                    sceneState: 'error',
-                    sceneError: 'Не удалось определить смены сцен.',
+                    ...applyMediaStatus(latestItem, 'transcribing'),
+                    sceneState: isTimeout ? 'timeout' : 'error',
+                    sceneError,
                   }
                 : latestItem,
             ),
           )
+          enqueueTranscription(item)
         })
         .finally(() => {
           sceneControllersRef.current.delete(item.id)

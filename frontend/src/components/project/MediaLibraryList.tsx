@@ -57,9 +57,11 @@ export function MediaLibraryList({
             aria-pressed={activeItemId === item.id}
           >
             <MediaLibraryThumb item={item} />
-            <span className="media-library-name">{item.filename}</span>
-            <span className="media-library-meta">
-              {mediaTypeLabels[item.type]} · {formatFileSize(item.size)}
+            <span className="media-library-title">
+              <span className="media-library-name">{item.filename}</span>
+              <span className="media-library-meta">
+                {mediaTypeLabels[item.type]} · {formatFileSize(item.size)}
+              </span>
             </span>
             <span className="media-library-state">
               {getMediaStatusLabel(item.status)}
@@ -149,27 +151,46 @@ function MediaLibraryThumb({ item }: { item: MediaItem }) {
 
 function MediaItemMetadata({ item }: { item: MediaItem }) {
   if (item.status === 'uploading' || item.status === 'metadata') {
-    return <span className="media-library-details">Читаем метаданные...</span>
+    return (
+      <span className="media-library-details">
+        <span>Читаем метаданные...</span>
+      </span>
+    )
   }
 
   if (item.type !== 'video' || !item.metadata) {
     return null
   }
 
+  const details = [
+    formatDuration(item.metadata.duration),
+    `${item.metadata.width} × ${item.metadata.height}`,
+    `${formatNumber(item.metadata.fps)} FPS`,
+    item.metadata.codec,
+    formatBitrate(item.metadata.bitrate),
+    orientationLabels[getSourceOrientation(item.metadata)],
+  ]
+  const stageDetails = [
+    item.previewState === 'processing' ? 'Готовим кадры...' : null,
+    item.previewError,
+    item.sceneState === 'processing' ? 'Ищем сцены...' : null,
+    item.scenes?.outcome === 'scenes_detected'
+      ? `Scenes detected: ${item.scenes.scenes.length}`
+      : null,
+    item.scenes?.outcome === 'no_scene_changes'
+      ? 'No scene changes detected'
+      : null,
+    item.sceneError,
+    item.transcriptionState === 'processing' ? 'Расшифровываем речь...' : null,
+    item.transcription ? 'Транскрипция готова' : null,
+    item.transcriptionError,
+  ]
+
   return (
     <span className="media-library-details">
-      {formatDuration(item.metadata.duration)} · {item.metadata.width} x{' '}
-      {item.metadata.height} · {formatNumber(item.metadata.fps)} FPS ·{' '}
-      {item.metadata.codec} · {formatBitrate(item.metadata.bitrate)} ·{' '}
-      {orientationLabels[getSourceOrientation(item.metadata)]}
-      {item.previewState === 'processing' ? ' · Готовим кадры...' : ''}
-      {item.previewError ? ` · ${item.previewError}` : ''}
-      {item.sceneState === 'processing' ? ' · Ищем сцены...' : ''}
-      {item.scenes ? ` · Сцен: ${item.scenes.scene_count}` : ''}
-      {item.sceneError ? ` · ${item.sceneError}` : ''}
-      {item.transcriptionState === 'processing' ? ' · Расшифровываем речь...' : ''}
-      {item.transcription ? ' · Транскрипция готова' : ''}
-      {item.transcriptionError ? ` · ${item.transcriptionError}` : ''}
+      {[...details, ...stageDetails].filter(Boolean).map((detail) => (
+        <span key={detail}>{detail}</span>
+      ))}
     </span>
   )
 }

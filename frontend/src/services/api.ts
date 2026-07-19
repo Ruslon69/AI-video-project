@@ -11,6 +11,16 @@ type ApiRequestOptions = RequestInit & {
   path: string
 }
 
+export class ApiError extends Error {
+  status: number
+
+  constructor(status: number, message?: string) {
+    super(message ?? `Backend request failed with status ${status}`)
+    this.name = 'ApiError'
+    this.status = status
+  }
+}
+
 export async function apiFetch<T>({ path, ...options }: ApiRequestOptions) {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...options,
@@ -21,7 +31,7 @@ export async function apiFetch<T>({ path, ...options }: ApiRequestOptions) {
   })
 
   if (!response.ok) {
-    throw new Error(`Backend request failed with status ${response.status}`)
+    throw new ApiError(response.status)
   }
 
   return response.json() as Promise<T>

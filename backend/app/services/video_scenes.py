@@ -3,6 +3,7 @@ import logging
 import re
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 from shutil import which
 
@@ -45,6 +46,53 @@ def parse_scene_timestamps(ffmpeg_output: str) -> list[float]:
     return timestamps
 
 
+def build_scene_response(
+    timestamps: list[float],
+    duration: float,
+    processing_time_ms: int | None = None,
+) -> VideoScenes:
+    normalized_duration = round(max(duration, 0), 3)
+    valid_boundaries = sorted({
+        round(timestamp, 3)
+        for timestamp in timestamps
+        if 0 < timestamp < normalized_duration
+    })
+
+    if not valid_boundaries:
+        return VideoScenes(
+            outcome="no_scene_changes",
+            scenes=[
+                {
+                    "id": "scene-1",
+                    "start": 0,
+                    "end": normalized_duration,
+                    "duration": normalized_duration,
+                }
+            ],
+            processingTimeMs=processing_time_ms,
+        )
+
+    boundaries = [0, *valid_boundaries, normalized_duration]
+    scenes = []
+    for index, (start, end) in enumerate(zip(boundaries, boundaries[1:]), start=1):
+        rounded_start = round(start, 3)
+        rounded_end = round(end, 3)
+        scenes.append(
+            {
+                "id": f"scene-{index}",
+                "start": rounded_start,
+                "end": rounded_end,
+                "duration": round(max(rounded_end - rounded_start, 0), 3),
+            }
+        )
+
+    return VideoScenes(
+        outcome="scenes_detected",
+        scenes=scenes,
+        processingTimeMs=processing_time_ms,
+    )
+
+
 def _validate_probe_data(probe_data: dict) -> None:
     video_stream = extract_video_stream(probe_data)
     duration = parse_duration(probe_data.get("format", {}).get("duration"))
@@ -77,12 +125,12 @@ def _run_scene_detection(input_path: Path) -> list[float]:
             text=True,
             check=False,
             shell=False,
-            timeout=settings.ffmpeg_timeout_seconds,
+            timeout=settings.scene_detection_timeout_seconds,
         )
     except subprocess.TimeoutExpired as exc:
         logger.warning(
             "video_scene_detection_timeout",
-            extra={"timeout_seconds": settings.ffmpeg_timeout_seconds},
+            extra={"timeout_seconds": settings.scene_detection_timeout_seconds},
         )
         raise VideoProcessingTimeoutError("ffmpeg") from exc
 
@@ -95,14 +143,17 @@ def _run_scene_detection(input_path: Path) -> list[float]:
 def _detect_video_scenes_from_content(content: bytes) -> VideoScenes:
     temp_dir: tempfile.TemporaryDirectory[str] | None = None
     try:
+        started_at = time.perf_counter()
         temp_dir = tempfile.TemporaryDirectory(prefix="video-scenes-")
         input_path = Path(temp_dir.name) / "upload"
         input_path.write_bytes(content)
 
         probe_data = probe_video_file(input_path)
         _validate_probe_data(probe_data)
+        duration = parse_duration(probe_data.get("format", {}).get("duration"))
         timestamps = _run_scene_detection(input_path)
-        return VideoScenes(scene_count=len(timestamps), timestamps=timestamps)
+        processing_time_ms = round((time.perf_counter() - started_at) * 1000)
+        return build_scene_response(timestamps, duration, processing_time_ms)
     finally:
         if temp_dir is not None:
             temp_dir.cleanup()
@@ -125,7 +176,10 @@ async def detect_video_scenes(file: UploadFile) -> VideoScenes:
 
         logger.info(
             "video_scene_detection_request_completed",
-            extra={"scene_count": scenes.scene_count},
+            extra={
+                "outcome": scenes.outcome,
+                "scene_count": len(scenes.scenes),
+            },
         )
         return scenes
     finally:
