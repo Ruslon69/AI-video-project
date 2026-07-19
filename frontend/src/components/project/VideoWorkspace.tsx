@@ -15,6 +15,7 @@ import {
   getSourceOrientation,
   isVideoCompatibleWithTarget,
 } from '../../utils/projectSettings'
+import { hasPlayableSource } from '../../utils/mediaSource'
 import { statusLabels } from '../../utils/projectState'
 import { VideoTimeline } from '../timeline/VideoTimeline'
 
@@ -22,12 +23,14 @@ type VideoWorkspaceProps = {
   activeItem: MediaItem | null
   outputSettings: ProjectOutputSettings
   selectedSubstage: EditingSubstage
+  onReconnectSource: () => void
 }
 
 export function VideoWorkspace({
   activeItem,
   outputSettings,
   selectedSubstage,
+  onReconnectSource,
 }: VideoWorkspaceProps) {
   return (
     <section className="video-workspace" aria-label="Видеоплеер">
@@ -41,18 +44,25 @@ export function VideoWorkspace({
           {statusLabels[selectedSubstage.status]}
         </span>
       </div>
-      <div className="video-frame">
-        <MediaPreview item={activeItem} />
-      </div>
+      <MediaPreview item={activeItem} onReconnectSource={onReconnectSource} />
       <p className="workspace-file">
         Активный подэтап: {selectedSubstage.title}
       </p>
-      <VideoMetadataPanel item={activeItem} outputSettings={outputSettings} />
+      <VideoMetadataPanel
+        item={activeItem}
+        outputSettings={outputSettings}
+      />
     </section>
   )
 }
 
-function MediaPreview({ item }: { item: MediaItem | null }) {
+function MediaPreview({
+  item,
+  onReconnectSource,
+}: {
+  item: MediaItem | null
+  onReconnectSource: () => void
+}) {
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const animationFrameRef = useRef<number | null>(null)
   const [currentTime, setCurrentTime] = useState(0)
@@ -122,68 +132,113 @@ function MediaPreview({ item }: { item: MediaItem | null }) {
 
   if (!item) {
     return (
-      <div className="video-placeholder">
-        <span className="play-mark" aria-hidden="true">
-          ▶
-        </span>
-        <h2>Добавьте медиа для предпросмотра</h2>
-        <p>Видео и изображения из медиатеки появятся здесь.</p>
+      <div className="video-frame">
+        <div className="video-placeholder">
+          <span className="play-mark" aria-hidden="true">
+            ▶
+          </span>
+          <h2>Добавьте медиа для предпросмотра</h2>
+          <p>Видео и изображения из медиатеки появятся здесь.</p>
+        </div>
       </div>
     )
   }
 
   if (item.type === 'video') {
+    const canPlayVideo = hasPlayableSource(item)
+
     return (
-      <div className="video-preview-stack">
-        <video
-          ref={videoRef}
-          className="video-player"
-          src={item.objectUrl}
-          controls
-          poster={item.previews?.poster.data_url}
-          onLoadedMetadata={syncPlaybackState}
-          onDurationChange={syncPlaybackState}
-          onPlay={startPlayheadUpdates}
-          onPause={syncPlaybackState}
-          onEnded={() => {
-            stopPlayheadUpdates()
-            syncPlaybackState()
-          }}
-          onSeeked={syncPlaybackState}
+      <>
+        <section
+          className="video-player-region"
+          aria-label="Видеоплеер"
         >
-          Ваш браузер не поддерживает видео.
-        </video>
-        <VideoTimeline
-          item={item}
-          currentTime={currentTime}
-          duration={videoDuration || item.metadata?.duration || 0}
-          onSeek={seekVideo}
-        />
+          {canPlayVideo ? (
+            <div className="video-frame-player">
+              <video
+                ref={videoRef}
+                className="video-player"
+                src={item.objectUrl}
+                controls
+                playsInline
+                preload="metadata"
+                poster={item.previews?.poster.data_url}
+                onLoadedMetadata={syncPlaybackState}
+                onDurationChange={syncPlaybackState}
+                onPlay={startPlayheadUpdates}
+                onPause={syncPlaybackState}
+                onEnded={() => {
+                  stopPlayheadUpdates()
+                  syncPlaybackState()
+                }}
+                onSeeked={syncPlaybackState}
+              >
+                Ваш браузер не поддерживает видео.
+              </video>
+            </div>
+          ) : (
+            <MissingVideoSource onReconnectSource={onReconnectSource} />
+          )}
+        </section>
+        {canPlayVideo ? (
+          <VideoTimeline
+            item={item}
+            currentTime={currentTime}
+            duration={videoDuration || item.metadata?.duration || 0}
+            onSeek={seekVideo}
+          />
+        ) : null}
         <VideoFilmstrip
           item={item}
           onSeek={seekVideo}
         />
-      </div>
+      </>
     )
   }
 
   if (item.type === 'image') {
     return (
-      <img
-        className="image-player"
-        src={item.objectUrl}
-        alt={`Предпросмотр ${item.filename}`}
-      />
+      <div className="video-frame">
+        <img
+          className="image-player"
+          src={item.objectUrl}
+          alt={`Предпросмотр ${item.filename}`}
+        />
+      </div>
     )
   }
 
   return (
-    <div className="video-placeholder">
-      <span className="play-mark" aria-hidden="true">
-        ♪
-      </span>
-      <h2>{item.filename}</h2>
-      <p>Аудиофайл добавлен в медиатеку. Предпросмотр доступен для видео и изображений.</p>
+    <div className="video-frame">
+      <div className="video-placeholder">
+        <span className="play-mark" aria-hidden="true">
+          ♪
+        </span>
+        <h2>{item.filename}</h2>
+        <p>Аудиофайл добавлен в медиатеку. Предпросмотр доступен для видео и изображений.</p>
+      </div>
+    </div>
+  )
+}
+
+function MissingVideoSource({
+  onReconnectSource,
+}: {
+  onReconnectSource: () => void
+}) {
+  return (
+    <div className="video-frame video-missing-source" role="status">
+      <div className="video-placeholder">
+        <h2>Исходный видеофайл недоступен после перезагрузки страницы.</h2>
+        <p>Добавьте файл повторно, чтобы продолжить просмотр и монтаж.</p>
+        <button
+          type="button"
+          className="primary-button"
+          onClick={onReconnectSource}
+        >
+          Выбрать видео повторно
+        </button>
+      </div>
     </div>
   )
 }
@@ -197,17 +252,17 @@ function VideoFilmstrip({
 }) {
   if (item.previewState === 'processing') {
     return (
-      <div className="video-filmstrip video-filmstrip-message" aria-live="polite">
+      <section className="video-filmstrip video-filmstrip-message" aria-live="polite">
         Готовим кадры предпросмотра...
-      </div>
+      </section>
     )
   }
 
   if (item.previewState === 'error' && item.previewError) {
     return (
-      <div className="video-filmstrip video-filmstrip-error" aria-live="polite">
+      <section className="video-filmstrip video-filmstrip-error" aria-live="polite">
         {item.previewError}
-      </div>
+      </section>
     )
   }
 
@@ -216,20 +271,22 @@ function VideoFilmstrip({
   }
 
   return (
-    <div className="video-filmstrip" aria-label="Кадры предпросмотра">
-      {item.previews.previews.map((frame) => (
-        <button
-          key={frame.timestamp}
-          type="button"
-          className="video-filmstrip-frame"
-          onClick={() => onSeek(frame.timestamp)}
-          aria-label={`Перейти к ${formatDuration(frame.timestamp)}`}
-        >
-          <img src={frame.data_url} alt="" aria-hidden="true" />
-          <span>{formatDuration(frame.timestamp)}</span>
-        </button>
-      ))}
-    </div>
+    <section className="video-filmstrip" aria-label="Кадры предпросмотра">
+      <div className="video-filmstrip-scroll">
+        {item.previews.previews.map((frame) => (
+          <button
+            key={frame.timestamp}
+            type="button"
+            className="video-filmstrip-frame"
+            onClick={() => onSeek(frame.timestamp)}
+            aria-label={`Перейти к ${formatDuration(frame.timestamp)}`}
+          >
+            <img src={frame.data_url} alt="" aria-hidden="true" />
+            <span>{formatDuration(frame.timestamp)}</span>
+          </button>
+        ))}
+      </div>
+    </section>
   )
 }
 
@@ -266,75 +323,78 @@ function VideoMetadataPanel({
     )
   }
 
-  if (item.status === 'uploading' || item.status === 'metadata') {
-    return (
-      <div className="metadata-panel" aria-live="polite">
-        <p className="section-label">Метаданные видео</p>
-        <p className="metadata-message">Анализируем видео...</p>
-      </div>
-    )
-  }
-
-  if (item.status === 'error' && item.errorMessage) {
-    return (
-      <div className="metadata-panel metadata-panel-error" aria-live="polite">
-        <p className="section-label">Метаданные видео</p>
-        <p className="metadata-message">
-          {item.errorMessage}
-        </p>
-      </div>
-    )
-  }
-
-  if (!item.metadata) {
-    return null
-  }
-
-  const metadata: VideoMetadata = item.metadata
-  const isCompatible = isVideoCompatibleWithTarget(
-    metadata,
-    outputSettings.aspectRatio,
-  )
-  const items = [
-    ['Файл', metadata.filename],
-    ['Длительность', formatDuration(metadata.duration)],
-    ['Размер кадра', `${metadata.width}×${metadata.height}`],
-    ['Ориентация', getOrientationLabel(metadata)],
-    ['FPS', formatNumber(metadata.fps)],
-    ['Кодек', metadata.codec],
-    ['Битрейт', formatBitrate(metadata.bitrate)],
-    ['Размер файла', formatFileSize(metadata.file_size)],
-  ]
+  const metadata: VideoMetadata | null = item.metadata
+  const isCompatible = metadata
+    ? isVideoCompatibleWithTarget(metadata, outputSettings.aspectRatio)
+    : true
+  const items = metadata
+    ? [
+        ['Файл', metadata.filename],
+        ['Длительность', formatDuration(metadata.duration)],
+        ['Размер кадра', `${metadata.width}×${metadata.height}`],
+        ['Ориентация', getOrientationLabel(metadata)],
+        ['FPS', formatNumber(metadata.fps)],
+        ['Кодек', metadata.codec],
+        ['Битрейт', formatBitrate(metadata.bitrate)],
+        ['Размер файла', formatFileSize(metadata.file_size)],
+      ]
+    : []
   const sceneSegments = item.scenes?.scenes ?? []
   const transcription = item.transcription
 
   return (
-    <div className="metadata-panel">
-      <p className="section-label">Метаданные видео</p>
-      <div
-        className="compatibility-status"
-        data-compatible={isCompatible}
+    <section className="video-analysis" aria-label="Анализ видео">
+      <section
+        className={`video-analysis-section metadata-panel${
+          item.status === 'error' && item.errorMessage ? ' metadata-panel-error' : ''
+        }`}
+        aria-live="polite"
       >
-        <strong>{isCompatible ? 'Compatible' : 'Adaptation required'}</strong>
-        <span>
-          Цель: {outputSettings.aspectRatio} · {outputSettings.resolution.width} x{' '}
-          {outputSettings.resolution.height}
-        </span>
-        {!isCompatible ? (
-          <p>
-            The source video will be adapted to the selected output format during editing.
+        <p className="section-label">Метаданные видео</p>
+        {item.status === 'uploading' || item.status === 'metadata' ? (
+          <p className="metadata-message">Анализируем видео...</p>
+        ) : null}
+        {item.status === 'error' && item.errorMessage ? (
+          <p className="metadata-message metadata-message-error">
+            {item.errorMessage}
           </p>
         ) : null}
-      </div>
-      <dl className="metadata-grid">
-        {items.map(([label, value]) => (
-          <div key={label} className="metadata-row">
-            <dt>{label}</dt>
-            <dd>{value}</dd>
-          </div>
-        ))}
-      </dl>
-      <div className="scene-summary" aria-live="polite">
+        {!metadata && item.status !== 'uploading' && item.status !== 'metadata' ? (
+          <p className="metadata-message">Метаданные пока недоступны.</p>
+        ) : null}
+        {metadata ? (
+          <>
+            <div
+              className="compatibility-status"
+              data-compatible={isCompatible}
+            >
+              <strong>{isCompatible ? 'Compatible' : 'Adaptation required'}</strong>
+              <span>
+                Цель: {outputSettings.aspectRatio} · {outputSettings.resolution.width} x{' '}
+                {outputSettings.resolution.height}
+              </span>
+              {!isCompatible ? (
+                <p>
+                  The source video will be adapted to the selected output format during editing.
+                </p>
+              ) : null}
+            </div>
+            <dl className="metadata-grid">
+              {items.map(([label, value]) => (
+                <div key={label} className="metadata-row">
+                  <dt>{label}</dt>
+                  <dd>{value}</dd>
+                </div>
+              ))}
+            </dl>
+          </>
+        ) : null}
+      </section>
+
+      <section
+        className="video-analysis-section scene-summary"
+        aria-live="polite"
+      >
         <div className="scene-summary-head">
           <p className="section-label">Сцены</p>
           <strong>
@@ -361,6 +421,9 @@ function VideoMetadataPanel({
             {item.sceneError}
           </p>
         ) : null}
+        {item.sceneState === 'idle' ? (
+          <p className="metadata-message">Анализ сцен еще не выполнен.</p>
+        ) : null}
         {item.scenes?.outcome === 'scenes_detected' ? (
           <div className="scene-timestamp-list" aria-label="Сегменты сцен">
             {sceneSegments.map((scene) => (
@@ -370,8 +433,12 @@ function VideoMetadataPanel({
             ))}
           </div>
         ) : null}
-      </div>
-      <div className="scene-summary" aria-live="polite">
+      </section>
+
+      <section
+        className="video-analysis-section scene-summary"
+        aria-live="polite"
+      >
         <div className="scene-summary-head">
           <p className="section-label">Транскрипция</p>
           <strong>
@@ -396,8 +463,17 @@ function VideoMetadataPanel({
             language: {transcription.language}
           </p>
         ) : null}
-      </div>
-    </div>
+        {!transcription && item.transcriptionState === 'idle' ? (
+          <p className="metadata-message">Транскрипция еще не выполнена.</p>
+        ) : null}
+        {!transcription &&
+          item.transcriptionState !== 'idle' &&
+          item.transcriptionState !== 'processing' &&
+          !item.transcriptionError ? (
+            <p className="metadata-message">Транскрипция пока недоступна.</p>
+          ) : null}
+      </section>
+    </section>
   )
 }
 

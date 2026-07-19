@@ -7,6 +7,7 @@ import {
   uploadVideoTranscription,
 } from '../services/api'
 import type { MediaFileRejection, MediaItem, MediaStatus, MediaType } from '../types'
+import { getMediaIdentity, hasPlayableSource } from '../utils/mediaSource'
 import { getMediaStatusProgress } from '../utils/mediaStatus'
 
 const MAX_ACTIVE_PREVIEW_REQUESTS = 2
@@ -158,20 +159,28 @@ export function useMediaLibrary(
     while (
       activeTranscriptionIdsRef.current.size < MAX_ACTIVE_TRANSCRIPTION_REQUESTS &&
       transcriptionQueueRef.current.length > 0
-    ) {
-      const item = transcriptionQueueRef.current.shift()
+	    ) {
+	      const item = transcriptionQueueRef.current.shift()
 
-      if (!item || !itemsRef.current.some((latestItem) => latestItem.id === item.id)) {
-        continue
-      }
+	      if (!item || !itemsRef.current.some((latestItem) => latestItem.id === item.id)) {
+	        continue
+	      }
 
-      queuedTranscriptionIdsRef.current.delete(item.id)
-      activeTranscriptionIdsRef.current.add(item.id)
+	      queuedTranscriptionIdsRef.current.delete(item.id)
+	      activeTranscriptionIdsRef.current.add(item.id)
 
-      const controller = new AbortController()
-      transcriptionControllersRef.current.set(item.id, controller)
+	      const latestItem = itemsRef.current.find((currentItem) => currentItem.id === item.id)
+	      const file = latestItem?.file
 
-      void uploadVideoTranscription(item.file, controller.signal)
+	      if (!file) {
+	        activeTranscriptionIdsRef.current.delete(item.id)
+	        continue
+	      }
+
+	      const controller = new AbortController()
+	      transcriptionControllersRef.current.set(item.id, controller)
+
+	      void uploadVideoTranscription(file, controller.signal)
         .then((transcription) => {
           if (
             controller.signal.aborted ||
@@ -267,13 +276,21 @@ export function useMediaLibrary(
         continue
       }
 
-      queuedSceneIdsRef.current.delete(item.id)
-      activeSceneIdsRef.current.add(item.id)
+	      queuedSceneIdsRef.current.delete(item.id)
+	      activeSceneIdsRef.current.add(item.id)
 
-      const controller = new AbortController()
-      sceneControllersRef.current.set(item.id, controller)
+	      const latestItem = itemsRef.current.find((currentItem) => currentItem.id === item.id)
+	      const file = latestItem?.file
 
-      void uploadVideoScenes(item.file, controller.signal)
+	      if (!file) {
+	        activeSceneIdsRef.current.delete(item.id)
+	        continue
+	      }
+
+	      const controller = new AbortController()
+	      sceneControllersRef.current.set(item.id, controller)
+
+	      void uploadVideoScenes(file, controller.signal)
         .then((scenes) => {
           if (
             controller.signal.aborted ||
@@ -372,13 +389,21 @@ export function useMediaLibrary(
         continue
       }
 
-      queuedPreviewIdsRef.current.delete(item.id)
-      activePreviewIdsRef.current.add(item.id)
+	      queuedPreviewIdsRef.current.delete(item.id)
+	      activePreviewIdsRef.current.add(item.id)
 
-      const controller = new AbortController()
-      previewControllersRef.current.set(item.id, controller)
+	      const latestItem = itemsRef.current.find((currentItem) => currentItem.id === item.id)
+	      const file = latestItem?.file
 
-      void uploadVideoPreviews(item.file, controller.signal)
+	      if (!file) {
+	        activePreviewIdsRef.current.delete(item.id)
+	        continue
+	      }
+
+	      const controller = new AbortController()
+	      previewControllersRef.current.set(item.id, controller)
+
+	      void uploadVideoPreviews(file, controller.signal)
         .then((previews) => {
           if (
             controller.signal.aborted ||
@@ -479,14 +504,15 @@ export function useMediaLibrary(
     return cleanupMediaLibrary
   }, [cleanupMediaLibrary])
 
-  const addFiles = useCallback((fileList: FileList | File[]) => {
-    const files = Array.from(fileList)
-    const existingKeys = new Set(itemsRef.current.map((item) => (
-      getDuplicateKey(item.file)
-    )))
-    const addedItems: MediaItem[] = []
-    const addedVideoItems: MediaItem[] = []
-    const rejectedFiles: MediaFileRejection[] = []
+	  const addFiles = useCallback((fileList: FileList | File[]) => {
+	    const files = Array.from(fileList)
+	    const existingKeys = new Set(itemsRef.current.map((item) => (
+	      getMediaIdentity(item)
+	    )))
+	    const addedItems: MediaItem[] = []
+	    const addedVideoItems: MediaItem[] = []
+	    const reconnectedItems: MediaItem[] = []
+	    const rejectedFiles: MediaFileRejection[] = []
 
     for (const file of files) {
       const type = getMediaType(file)
@@ -500,9 +526,29 @@ export function useMediaLibrary(
         continue
       }
 
-      if (existingKeys.has(duplicateKey)) {
-        continue
-      }
+	      const reconnectableItem = itemsRef.current.find((item) => (
+	        getMediaIdentity(item) === duplicateKey && !hasPlayableSource(item)
+	      ))
+
+	      if (reconnectableItem) {
+	        const objectUrl = URL.createObjectURL(file)
+	        reconnectedItems.push({
+	          ...reconnectableItem,
+	          file,
+	          objectUrl,
+	          status: reconnectableItem.metadata ? 'ready' : reconnectableItem.status,
+	          progress: reconnectableItem.metadata
+	            ? getMediaStatusProgress('ready')
+	            : reconnectableItem.progress,
+	          errorMessage: undefined,
+	        })
+	        existingKeys.add(duplicateKey)
+	        continue
+	      }
+
+	      if (existingKeys.has(duplicateKey)) {
+	        continue
+	      }
 
       existingKeys.add(duplicateKey)
 
@@ -516,19 +562,36 @@ export function useMediaLibrary(
 
     setFileRejections(rejectedFiles)
 
-    if (addedItems.length === 0) {
-      return
-    }
+	    if (addedItems.length === 0 && reconnectedItems.length === 0) {
+	      return
+	    }
 
-    updateItems((currentItems) => [...currentItems, ...addedItems])
+	    updateItems((currentItems) => {
+	      const reconnectedById = new Map(
+	        reconnectedItems.map((item) => [item.id, item]),
+	      )
 
-    if (!activeItemId && itemsRef.current.length === 0) {
-      setActiveItemId(addedItems[0].id)
-    }
+	      return [
+	        ...currentItems.map((item) => reconnectedById.get(item.id) ?? item),
+	        ...addedItems,
+	      ]
+	    })
 
-    for (const item of addedVideoItems) {
-      const controller = new AbortController()
-      metadataControllersRef.current.set(item.id, controller)
+	    if (reconnectedItems.length > 0) {
+	      setActiveItemId(reconnectedItems[0].id)
+	    } else if (!activeItemId && itemsRef.current.length === 0) {
+	      setActiveItemId(addedItems[0].id)
+	    }
+
+	    for (const item of addedVideoItems) {
+	      const file = item.file
+
+	      if (!file) {
+	        continue
+	      }
+
+	      const controller = new AbortController()
+	      metadataControllersRef.current.set(item.id, controller)
 
       updateItems((latestItems) =>
         latestItems.map((latestItem) =>
@@ -538,7 +601,7 @@ export function useMediaLibrary(
         ),
       )
 
-      void uploadVideoMetadata(item.file, controller.signal)
+	      void uploadVideoMetadata(file, controller.signal)
         .then((metadata) => {
           updateItems((latestItems) =>
             latestItems.map((latestItem) =>

@@ -15,6 +15,9 @@ export type VersionRecord = {
   description: string
   status: StageStatus
   comment: string
+  userName?: string
+  pinned?: boolean
+  tags?: string[]
 }
 
 export type EditingSubstage = {
@@ -156,7 +159,7 @@ export type ProjectOutputSettings = {
 
 export type MediaItem = {
   id: string
-  file: File
+  file: File | null
   filename: string
   type: MediaType
   size: number

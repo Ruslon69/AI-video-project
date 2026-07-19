@@ -7,23 +7,28 @@ const createSubstage = (
   index: number,
   title: string,
   status: StageStatus,
-): EditingSubstage => ({
-  id: `${stageId}-${index + 1}`,
-  title,
-  status,
-  comment: '',
-  selectedVersionId: null,
-  versions: [
-    {
-      id: `${stageId}-${index + 1}-v1`,
-      version: 1,
-      createdAt: now,
-      description: 'Начальное состояние проверки',
-      status,
-      comment: '',
-    },
-  ],
-})
+): EditingSubstage => {
+  const id = `${stageId}-${index + 1}`
+  const versionId = `${id}-v1`
+
+  return {
+    id,
+    title,
+    status,
+    comment: '',
+    selectedVersionId: versionId,
+    versions: [
+      {
+        id: versionId,
+        version: 1,
+        createdAt: now,
+        description: 'Начальное состояние проверки',
+        status,
+        comment: '',
+      },
+    ],
+  }
+}
 
 const createStage = (
   id: string,

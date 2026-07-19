@@ -79,7 +79,97 @@ export function createVersion(
     description,
     status,
     comment,
+    userName: undefined,
+    pinned: false,
+    tags: [],
   }
+}
+
+export function renameSelectedSubstageVersion(
+  state: ProjectState,
+  versionId: string,
+  description: string,
+) {
+  const nextDescription = description.trim()
+
+  if (!nextDescription) {
+    return state
+  }
+
+  return updateSelectedSubstage(state, (substage) => ({
+    ...substage,
+    versions: substage.versions.map((version) =>
+      version.id === versionId
+        ? { ...version, description: nextDescription }
+        : version,
+    ),
+  }))
+}
+
+export function duplicateSelectedSubstageVersion(
+  state: ProjectState,
+  versionId: string,
+) {
+  return updateSelectedSubstage(state, (substage) => {
+    const version = substage.versions.find((item) => item.id === versionId)
+
+    if (!version) {
+      return substage
+    }
+
+    const duplicate: VersionRecord = {
+      ...version,
+      id: `${substage.id}-v${substage.versions.length + 1}-${Date.now()}`,
+      version: substage.versions.length + 1,
+      createdAt: new Date().toISOString(),
+      description: `${version.description} copy`,
+    }
+
+    return {
+      ...substage,
+      versions: [...substage.versions, duplicate],
+    }
+  })
+}
+
+export function deleteSelectedSubstageVersion(
+  state: ProjectState,
+  versionId: string,
+) {
+  return updateSelectedSubstage(state, (substage) => {
+    if (
+      substage.versions.length <= 1 ||
+      substage.selectedVersionId === versionId
+    ) {
+      return substage
+    }
+
+    return {
+      ...substage,
+      versions: substage.versions.filter((version) => version.id !== versionId),
+    }
+  })
+}
+
+export function keepOnlySelectedSubstageVersion(
+  state: ProjectState,
+  versionId: string,
+) {
+  return updateSelectedSubstage(state, (substage) => {
+    const version = substage.versions.find((item) => item.id === versionId)
+
+    if (!version) {
+      return substage
+    }
+
+    return {
+      ...substage,
+      comment: version.comment,
+      status: version.status,
+      selectedVersionId: version.id,
+      versions: [version],
+    }
+  })
 }
 
 function normalizeStageStatus(substages: EditingSubstage[]): StageStatus {

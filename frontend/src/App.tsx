@@ -19,10 +19,14 @@ import {
 } from './utils/projectSettings'
 import {
   createReviewVersion,
+  deleteSelectedSubstageVersion,
+  duplicateSelectedSubstageVersion,
   ensureProjectState,
   getProjectStats,
   getSelectedStage,
   getSelectedSubstage,
+  keepOnlySelectedSubstageVersion,
+  renameSelectedSubstageVersion,
   restoreSelectedSubstageVersion,
   setSelectedSubstageStatus,
   updateSelectedSubstageComment,
@@ -67,7 +71,7 @@ function App() {
     () => getProjectStats(projectState.stages),
     [projectState.stages],
   )
-  const activeHelpContent = openHelpId ? helpContent[openHelpId] : null
+	  const activeHelpContent = openHelpId ? helpContent[openHelpId] : null
 
   useEffect(() => {
     void checkBackendHealth().then(setIsBackendConnected)
@@ -101,15 +105,19 @@ function App() {
     }))
   }
 
-  const handleOutputSettingsChange = (settings: ProjectOutputSettings) => {
-    setOutputSettings((currentSettings) => {
-      if (settings.platform !== currentSettings.platform) {
-        return applyPlatformDefaults(settings, settings.platform)
-      }
+	  const handleOutputSettingsChange = (settings: ProjectOutputSettings) => {
+	    setOutputSettings((currentSettings) => {
+	      if (settings.platform !== currentSettings.platform) {
+	        return applyPlatformDefaults(settings, settings.platform)
+	      }
 
-      return settings
-    })
-  }
+	      return settings
+	    })
+	  }
+
+	  const handleReconnectMediaSource = () => {
+	    document.getElementById('media-upload')?.click()
+	  }
 
   return (
     <div className="app-shell">
@@ -155,11 +163,12 @@ function App() {
             setIsAssistantOpen(true)
           }}
         />
-        <VideoWorkspace
-          activeItem={activeMediaItem}
-          outputSettings={outputSettings}
-          selectedSubstage={selectedSubstage}
-        />
+	        <VideoWorkspace
+	          activeItem={activeMediaItem}
+	          outputSettings={outputSettings}
+	          selectedSubstage={selectedSubstage}
+	          onReconnectSource={handleReconnectMediaSource}
+	        />
         <ReviewPanel
           stage={selectedStage}
           substage={selectedSubstage}
@@ -197,6 +206,26 @@ function App() {
           onViewVersion={(versionId) =>
             setProjectState((currentState) =>
               restoreSelectedSubstageVersion(currentState, versionId),
+            )
+          }
+          onRenameVersion={(versionId, description) =>
+            setProjectState((currentState) =>
+              renameSelectedSubstageVersion(currentState, versionId, description),
+            )
+          }
+          onDuplicateVersion={(versionId) =>
+            setProjectState((currentState) =>
+              duplicateSelectedSubstageVersion(currentState, versionId),
+            )
+          }
+          onDeleteVersion={(versionId) =>
+            setProjectState((currentState) =>
+              deleteSelectedSubstageVersion(currentState, versionId),
+            )
+          }
+          onKeepOnlyVersion={(versionId) =>
+            setProjectState((currentState) =>
+              keepOnlySelectedSubstageVersion(currentState, versionId),
             )
           }
         />
