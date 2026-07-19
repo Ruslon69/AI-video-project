@@ -1,22 +1,19 @@
-import type { EditingSubstage } from '../../types'
-import type { VideoMetadata } from '../../types'
+import type { EditingSubstage, MediaItem, VideoMetadata } from '../../types'
+import {
+  formatBitrate,
+  formatDuration,
+  formatFileSize,
+  formatNumber,
+} from '../../utils/mediaFormat'
 import { statusLabels } from '../../utils/projectState'
 
 type VideoWorkspaceProps = {
-  fileName: string | null
-  videoUrl: string | null
-  metadata: VideoMetadata | null
-  isMetadataLoading: boolean
-  metadataError: string | null
+  activeItem: MediaItem | null
   selectedSubstage: EditingSubstage
 }
 
 export function VideoWorkspace({
-  fileName,
-  videoUrl,
-  metadata,
-  isMetadataLoading,
-  metadataError,
+  activeItem,
   selectedSubstage,
 }: VideoWorkspaceProps) {
   return (
@@ -24,7 +21,7 @@ export function VideoWorkspace({
       <div className="workspace-toolbar">
         <div>
           <p className="section-label">Предпросмотр</p>
-          <h2>{fileName ?? 'Видео не выбрано'}</h2>
+          <h2>{activeItem?.filename ?? 'Медиа не выбрано'}</h2>
         </div>
         <span className={`current-status current-status-${selectedSubstage.status}`}>
           <span aria-hidden="true" />
@@ -32,65 +29,110 @@ export function VideoWorkspace({
         </span>
       </div>
       <div className="video-frame">
-        {videoUrl ? (
-          <video className="video-player" src={videoUrl} controls>
-            Ваш браузер не поддерживает видео.
-          </video>
-        ) : (
-          <div className="video-placeholder">
-            <span className="play-mark" aria-hidden="true">
-              ▶
-            </span>
-            <h2>Загрузите видео для предпросмотра</h2>
-            <p>Локальный файл появится здесь с элементами управления.</p>
-          </div>
-        )}
+        <MediaPreview item={activeItem} />
       </div>
       <p className="workspace-file">
         Активный подэтап: {selectedSubstage.title}
       </p>
-      <VideoMetadataPanel
-        metadata={metadata}
-        isLoading={isMetadataLoading}
-        error={metadataError}
-      />
+      <VideoMetadataPanel item={activeItem} />
     </section>
   )
 }
 
-type VideoMetadataPanelProps = {
-  metadata: VideoMetadata | null
-  isLoading: boolean
-  error: string | null
+function MediaPreview({ item }: { item: MediaItem | null }) {
+  if (!item) {
+    return (
+      <div className="video-placeholder">
+        <span className="play-mark" aria-hidden="true">
+          ▶
+        </span>
+        <h2>Добавьте медиа для предпросмотра</h2>
+        <p>Видео и изображения из медиатеки появятся здесь.</p>
+      </div>
+    )
+  }
+
+  if (item.type === 'video') {
+    return (
+      <video className="video-player" src={item.objectUrl} controls>
+        Ваш браузер не поддерживает видео.
+      </video>
+    )
+  }
+
+  if (item.type === 'image') {
+    return (
+      <img
+        className="image-player"
+        src={item.objectUrl}
+        alt={`Предпросмотр ${item.filename}`}
+      />
+    )
+  }
+
+  return (
+    <div className="video-placeholder">
+      <span className="play-mark" aria-hidden="true">
+        ♪
+      </span>
+      <h2>{item.filename}</h2>
+      <p>Аудиофайл добавлен в медиатеку. Предпросмотр доступен для видео и изображений.</p>
+    </div>
+  )
 }
 
-function VideoMetadataPanel({
-  metadata,
-  isLoading,
-  error,
-}: VideoMetadataPanelProps) {
-  if (isLoading) {
+function VideoMetadataPanel({ item }: { item: MediaItem | null }) {
+  if (!item) {
+    return null
+  }
+
+  if (item.type !== 'video') {
+    return (
+      <div className="metadata-panel">
+        <p className="section-label">Сведения о медиа</p>
+        <dl className="metadata-grid">
+          <div className="metadata-row">
+            <dt>Файл</dt>
+            <dd>{item.filename}</dd>
+          </div>
+          <div className="metadata-row">
+            <dt>Тип</dt>
+            <dd>{item.type === 'image' ? 'Изображение' : 'Аудио'}</dd>
+          </div>
+          <div className="metadata-row">
+            <dt>Размер файла</dt>
+            <dd>{formatFileSize(item.size)}</dd>
+          </div>
+        </dl>
+      </div>
+    )
+  }
+
+  if (item.state === 'processing') {
     return (
       <div className="metadata-panel" aria-live="polite">
-        <p className="section-label">Метаданные</p>
+        <p className="section-label">Метаданные видео</p>
         <p className="metadata-message">Анализируем видео...</p>
       </div>
     )
   }
 
-  if (error) {
+  if (item.error) {
     return (
       <div className="metadata-panel metadata-panel-error" aria-live="polite">
-        <p className="section-label">Метаданные</p>
-        <p className="metadata-message">{error}</p>
+        <p className="section-label">Метаданные видео</p>
+        <p className="metadata-message">
+          Не удалось прочитать метаданные видео. Можно выбрать другой файл или попробовать снова позже.
+        </p>
       </div>
     )
   }
 
-  if (!metadata) {
+  if (!item.metadata) {
     return null
   }
 
+  const metadata: VideoMetadata = item.metadata
   const items = [
     ['Файл', metadata.filename],
     ['Длительность', formatDuration(metadata.duration)],
@@ -103,7 +145,7 @@ function VideoMetadataPanel({
 
   return (
     <div className="metadata-panel">
-      <p className="section-label">Метаданные</p>
+      <p className="section-label">Метаданные видео</p>
       <dl className="metadata-grid">
         {items.map(([label, value]) => (
           <div key={label} className="metadata-row">
@@ -114,33 +156,4 @@ function VideoMetadataPanel({
       </dl>
     </div>
   )
-}
-
-function formatDuration(seconds: number) {
-  const minutes = Math.floor(seconds / 60)
-  const remainingSeconds = Math.round(seconds % 60)
-
-  return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`
-}
-
-function formatNumber(value: number) {
-  return new Intl.NumberFormat('ru-RU', {
-    maximumFractionDigits: 3,
-  }).format(value)
-}
-
-function formatBitrate(bitrate: number | null) {
-  if (!bitrate) {
-    return 'Не указан'
-  }
-
-  return `${formatNumber(bitrate / 1_000_000)} Мбит/с`
-}
-
-function formatFileSize(bytes: number) {
-  return new Intl.NumberFormat('ru-RU', {
-    maximumFractionDigits: 2,
-    style: 'unit',
-    unit: 'megabyte',
-  }).format(bytes / 1_000_000)
 }

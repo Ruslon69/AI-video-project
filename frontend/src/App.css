@@ -138,6 +138,25 @@
   margin-bottom: 14px;
 }
 
+.project-setting {
+  display: grid;
+  gap: 7px;
+  margin: 0 0 14px;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.project-setting select {
+  min-height: 38px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 0 10px;
+  color: var(--text);
+  background: var(--panel-strong);
+  font: inherit;
+}
+
 .selected-file,
 .workspace-file {
   margin: 12px 0 0;
@@ -260,7 +279,8 @@
 }
 
 .primary-button:disabled,
-.secondary-button:disabled {
+.secondary-button:disabled,
+.ghost-button:disabled {
   cursor: not-allowed;
   opacity: 0.45;
   transform: none;
@@ -306,7 +326,8 @@ textarea:focus-visible {
 
 .stage-list,
 .substage-list,
-.version-list {
+.version-list,
+.media-library-list {
   padding: 0;
   margin: 12px 0 0;
   list-style: none;
@@ -669,6 +690,73 @@ textarea:focus-visible {
   font-size: 12px;
 }
 
+.media-library-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.media-library-list {
+  display: grid;
+  gap: 8px;
+}
+
+.media-library-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  padding: 8px;
+  background: var(--panel-strong);
+}
+
+.media-library-item[data-active='true'] {
+  border-color: var(--accent);
+  background: var(--selected);
+}
+
+.media-library-item[data-state='error'] {
+  border-color: rgba(216, 83, 83, 0.45);
+}
+
+.media-library-select {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+  border: 0;
+  padding: 0;
+  color: var(--text);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.media-library-name {
+  color: var(--text-strong);
+  font-size: 13px;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.media-library-meta,
+.media-library-state,
+.media-library-details {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.media-library-details {
+  overflow-wrap: anywhere;
+}
+
+.media-remove-button {
+  align-self: start;
+}
+
 .video-workspace {
   padding: 16px;
 }
@@ -700,6 +788,12 @@ textarea:focus-visible {
   width: 100%;
   max-height: 580px;
   background: #000;
+}
+
+.image-player {
+  width: 100%;
+  max-height: 580px;
+  object-fit: contain;
 }
 
 .video-placeholder {

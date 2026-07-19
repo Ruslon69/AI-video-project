@@ -8,10 +8,11 @@ import { VideoWorkspace } from './components/project/VideoWorkspace'
 import { ReviewPanel } from './components/review/ReviewPanel'
 import { initialProjectState } from './data/stages'
 import { helpContent } from './data/helpContent'
+import { useMediaLibrary } from './hooks/useMediaLibrary'
 import { useLocalStorageState } from './hooks/useLocalStorageState'
 import { useTheme } from './hooks/useTheme'
-import { checkBackendHealth, uploadVideoMetadata } from './services/api'
-import type { VideoMetadata } from './types'
+import { checkBackendHealth } from './services/api'
+import type { TargetOutputDuration } from './types'
 import {
   createReviewVersion,
   ensureProjectState,
@@ -32,15 +33,21 @@ function App() {
     initialProjectState,
     ensureProjectState,
   )
-  const [videoFile, setVideoFile] = useState<File | null>(null)
-  const [videoUrl, setVideoUrl] = useState<string | null>(null)
   const [isAssistantOpen, setIsAssistantOpen] = useState(false)
   const [assistantDraftQuestion, setAssistantDraftQuestion] = useState('')
   const [openHelpId, setOpenHelpId] = useState<string | null>(null)
   const [isBackendConnected, setIsBackendConnected] = useState(false)
-  const [videoMetadata, setVideoMetadata] = useState<VideoMetadata | null>(null)
-  const [isMetadataLoading, setIsMetadataLoading] = useState(false)
-  const [metadataError, setMetadataError] = useState<string | null>(null)
+  const [targetOutputDuration, setTargetOutputDuration] =
+    useState<TargetOutputDuration>(60)
+  const {
+    items: mediaItems,
+    activeItem: activeMediaItem,
+    activeItemId: activeMediaItemId,
+    addFiles,
+    selectItem,
+    removeItem,
+    clearLibrary,
+  } = useMediaLibrary(setIsBackendConnected)
 
   const selectedStage = useMemo(
     () => getSelectedStage(projectState),
@@ -59,20 +66,6 @@ function App() {
   useEffect(() => {
     void checkBackendHealth().then(setIsBackendConnected)
   }, [])
-
-  useEffect(() => {
-    if (!videoFile) {
-      setVideoUrl(null)
-      return
-    }
-
-    const objectUrl = URL.createObjectURL(videoFile)
-    setVideoUrl(objectUrl)
-
-    return () => {
-      URL.revokeObjectURL(objectUrl)
-    }
-  }, [videoFile])
 
   const handleStageSelect = (stageId: string, substageId?: string) => {
     setProjectState((currentState) => {
@@ -102,31 +95,6 @@ function App() {
     }))
   }
 
-  const handleFileSelect = (file: File | null) => {
-    setVideoFile(file)
-    setVideoMetadata(null)
-    setMetadataError(null)
-
-    if (!file) {
-      setIsMetadataLoading(false)
-      return
-    }
-
-    setIsMetadataLoading(true)
-    void uploadVideoMetadata(file)
-      .then((metadata) => {
-        setVideoMetadata(metadata)
-        setIsBackendConnected(true)
-      })
-      .catch(() => {
-        setMetadataError(
-          'Не удалось прочитать метаданные видео. Проверьте файл или запустите backend.',
-        )
-        setIsBackendConnected(false)
-      })
-      .finally(() => setIsMetadataLoading(false))
-  }
-
   return (
     <div className="app-shell">
       <AppHeader
@@ -144,10 +112,16 @@ function App() {
           selectedStageId={projectState.selectedStageId}
           selectedSubstageId={projectState.selectedSubstageId}
           expandedStageIds={projectState.expandedStageIds}
-          selectedFileName={videoFile?.name ?? null}
+          mediaItems={mediaItems}
+          activeMediaItemId={activeMediaItemId}
+          targetOutputDuration={targetOutputDuration}
           stats={stats}
           openHelpId={openHelpId}
-          onFileSelect={handleFileSelect}
+          onFilesAdd={addFiles}
+          onMediaSelect={selectItem}
+          onMediaRemove={removeItem}
+          onMediaClear={clearLibrary}
+          onTargetOutputDurationChange={setTargetOutputDuration}
           onStageSelect={handleStageSelect}
           onStageToggle={handleStageToggle}
           onHelpOpenChange={(helpId, isOpen) =>
@@ -165,11 +139,7 @@ function App() {
           }}
         />
         <VideoWorkspace
-          fileName={videoFile?.name ?? null}
-          videoUrl={videoUrl}
-          metadata={videoMetadata}
-          isMetadataLoading={isMetadataLoading}
-          metadataError={metadataError}
+          activeItem={activeMediaItem}
           selectedSubstage={selectedSubstage}
         />
         <ReviewPanel

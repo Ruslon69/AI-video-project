@@ -65,3 +65,22 @@ export type VideoMetadata = {
   bitrate: number | null
   file_size: number
 }
+
+export type MediaType = 'video' | 'image' | 'audio'
+
+export type MediaProcessingState = 'ready' | 'processing' | 'error'
+
+export type TargetOutputDuration = 30 | 60 | 180 | 300 | 600
+
+export type MediaItem = {
+  id: string
+  file: File
+  filename: string
+  type: MediaType
+  size: number
+  lastModified: number
+  objectUrl: string
+  state: MediaProcessingState
+  metadata: VideoMetadata | null
+  error: string | null
+}
