@@ -61,6 +61,7 @@ export function MediaLibraryList({
             onClick={() => onSelect(item.id)}
             aria-pressed={activeItemId === item.id}
           >
+            <MediaLibraryThumb item={item} />
             <span className="media-library-name">{item.filename}</span>
             <span className="media-library-meta">
               {mediaTypeLabels[item.type]} · {formatFileSize(item.size)}
@@ -84,6 +85,50 @@ export function MediaLibraryList({
   )
 }
 
+function MediaLibraryThumb({ item }: { item: MediaItem }) {
+  if (item.type === 'video') {
+    if (item.previews?.poster.data_url) {
+      return (
+        <img
+          className="media-library-thumb"
+          src={item.previews.poster.data_url}
+          alt=""
+          aria-hidden="true"
+        />
+      )
+    }
+
+    return (
+      <span
+        className="media-library-thumb media-library-thumb-placeholder"
+        aria-hidden="true"
+      >
+        {item.previewState === 'processing' ? '...' : '▶'}
+      </span>
+    )
+  }
+
+  if (item.type === 'image') {
+    return (
+      <img
+        className="media-library-thumb"
+        src={item.objectUrl}
+        alt=""
+        aria-hidden="true"
+      />
+    )
+  }
+
+  return (
+    <span
+      className="media-library-thumb media-library-thumb-placeholder"
+      aria-hidden="true"
+    >
+      ♪
+    </span>
+  )
+}
+
 function MediaItemMetadata({ item }: { item: MediaItem }) {
   if (item.state === 'processing') {
     return <span className="media-library-details">Читаем метаданные...</span>
@@ -103,6 +148,8 @@ function MediaItemMetadata({ item }: { item: MediaItem }) {
       {item.metadata.height} · {formatNumber(item.metadata.fps)} FPS ·{' '}
       {item.metadata.codec} · {formatBitrate(item.metadata.bitrate)} ·{' '}
       {orientationLabels[getSourceOrientation(item.metadata)]}
+      {item.previewState === 'processing' ? ' · Готовим кадры...' : ''}
+      {item.previewError ? ` · ${item.previewError}` : ''}
     </span>
   )
 }

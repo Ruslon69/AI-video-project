@@ -1,3 +1,4 @@
+import { useRef } from 'react'
 import type {
   EditingSubstage,
   MediaItem,
@@ -51,6 +52,8 @@ export function VideoWorkspace({
 }
 
 function MediaPreview({ item }: { item: MediaItem | null }) {
+  const videoRef = useRef<HTMLVideoElement | null>(null)
+
   if (!item) {
     return (
       <div className="video-placeholder">
@@ -65,9 +68,25 @@ function MediaPreview({ item }: { item: MediaItem | null }) {
 
   if (item.type === 'video') {
     return (
-      <video className="video-player" src={item.objectUrl} controls>
-        Ваш браузер не поддерживает видео.
-      </video>
+      <div className="video-preview-stack">
+        <video
+          ref={videoRef}
+          className="video-player"
+          src={item.objectUrl}
+          controls
+          poster={item.previews?.poster.data_url}
+        >
+          Ваш браузер не поддерживает видео.
+        </video>
+        <VideoFilmstrip
+          item={item}
+          onSeek={(timestamp) => {
+            if (videoRef.current) {
+              videoRef.current.currentTime = timestamp
+            }
+          }}
+        />
+      </div>
     )
   }
 
@@ -88,6 +107,51 @@ function MediaPreview({ item }: { item: MediaItem | null }) {
       </span>
       <h2>{item.filename}</h2>
       <p>Аудиофайл добавлен в медиатеку. Предпросмотр доступен для видео и изображений.</p>
+    </div>
+  )
+}
+
+function VideoFilmstrip({
+  item,
+  onSeek,
+}: {
+  item: MediaItem
+  onSeek: (timestamp: number) => void
+}) {
+  if (item.previewState === 'processing') {
+    return (
+      <div className="video-filmstrip video-filmstrip-message" aria-live="polite">
+        Готовим кадры предпросмотра...
+      </div>
+    )
+  }
+
+  if (item.previewState === 'error' && item.previewError) {
+    return (
+      <div className="video-filmstrip video-filmstrip-error" aria-live="polite">
+        {item.previewError}
+      </div>
+    )
+  }
+
+  if (!item.previews?.previews.length) {
+    return null
+  }
+
+  return (
+    <div className="video-filmstrip" aria-label="Кадры предпросмотра">
+      {item.previews.previews.map((frame) => (
+        <button
+          key={frame.timestamp}
+          type="button"
+          className="video-filmstrip-frame"
+          onClick={() => onSeek(frame.timestamp)}
+          aria-label={`Перейти к ${formatDuration(frame.timestamp)}`}
+        >
+          <img src={frame.data_url} alt="" aria-hidden="true" />
+          <span>{formatDuration(frame.timestamp)}</span>
+        </button>
+      ))}
     </div>
   )
 }

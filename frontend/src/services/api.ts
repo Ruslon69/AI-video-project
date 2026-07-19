@@ -1,4 +1,4 @@
-import type { VideoMetadata } from '../types'
+import type { VideoMetadata, VideoPreviews } from '../types'
 
 const API_BASE_URL = 'http://127.0.0.1:8000'
 
@@ -31,7 +31,7 @@ export async function checkBackendHealth() {
   }
 }
 
-export async function uploadVideoMetadata(file: File) {
+export async function uploadVideoMetadata(file: File, signal?: AbortSignal) {
   const formData = new FormData()
   formData.append('file', file)
 
@@ -39,5 +39,18 @@ export async function uploadVideoMetadata(file: File) {
     path: '/video/metadata',
     method: 'POST',
     body: formData,
+    signal,
+  })
+}
+
+export async function uploadVideoPreviews(file: File, signal?: AbortSignal) {
+  const formData = new FormData()
+  formData.append('file', file)
+
+  return apiFetch<VideoPreviews>({
+    path: '/video/previews',
+    method: 'POST',
+    body: formData,
+    signal,
   })
 }

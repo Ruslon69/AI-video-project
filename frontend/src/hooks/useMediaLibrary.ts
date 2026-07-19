@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { uploadVideoMetadata } from '../services/api'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { uploadVideoMetadata, uploadVideoPreviews } from '../services/api'
 import type { MediaItem, MediaType } from '../types'
+
+const MAX_ACTIVE_PREVIEW_REQUESTS = 2
 
 function getMediaType(file: File): MediaType | null {
   if (file.type.startsWith('video/')) {
@@ -32,6 +34,12 @@ export function useMediaLibrary(
   const [items, setItems] = useState<MediaItem[]>([])
   const [activeItemId, setActiveItemId] = useState<string | null>(null)
   const itemsRef = useRef<MediaItem[]>([])
+  const isMountedRef = useRef(true)
+  const metadataControllersRef = useRef(new Map<string, AbortController>())
+  const previewControllersRef = useRef(new Map<string, AbortController>())
+  const previewQueueRef = useRef<MediaItem[]>([])
+  const queuedPreviewIdsRef = useRef(new Set<string>())
+  const activePreviewIdsRef = useRef(new Set<string>())
 
   const activeItem = useMemo(
     () => items.find((item) => item.id === activeItemId) ?? null,
@@ -42,16 +50,123 @@ export function useMediaLibrary(
     itemsRef.current = items
   }, [items])
 
+  const updateItems = useCallback((updater: (items: MediaItem[]) => MediaItem[]) => {
+    if (!isMountedRef.current) {
+      return
+    }
+
+    setItems(updater)
+  }, [])
+
+  const abortMediaWork = useCallback((itemId: string) => {
+    metadataControllersRef.current.get(itemId)?.abort()
+    metadataControllersRef.current.delete(itemId)
+    previewControllersRef.current.get(itemId)?.abort()
+    previewControllersRef.current.delete(itemId)
+    queuedPreviewIdsRef.current.delete(itemId)
+    previewQueueRef.current = previewQueueRef.current.filter((item) => item.id !== itemId)
+  }, [])
+
+  const pumpPreviewQueue = useCallback(() => {
+    while (
+      activePreviewIdsRef.current.size < MAX_ACTIVE_PREVIEW_REQUESTS &&
+      previewQueueRef.current.length > 0
+    ) {
+      const item = previewQueueRef.current.shift()
+
+      if (!item || !itemsRef.current.some((latestItem) => latestItem.id === item.id)) {
+        continue
+      }
+
+      queuedPreviewIdsRef.current.delete(item.id)
+      activePreviewIdsRef.current.add(item.id)
+
+      const controller = new AbortController()
+      previewControllersRef.current.set(item.id, controller)
+
+      void uploadVideoPreviews(item.file, controller.signal)
+        .then((previews) => {
+          if (
+            controller.signal.aborted ||
+            !itemsRef.current.some((latestItem) => latestItem.id === item.id)
+          ) {
+            return
+          }
+
+          updateItems((latestItems) =>
+            latestItems.map((latestItem) =>
+              latestItem.id === item.id
+                ? {
+                    ...latestItem,
+                    previews,
+                    previewState: 'ready',
+                    previewError: null,
+                  }
+                : latestItem,
+            ),
+          )
+          onBackendConnectionChange(true)
+        })
+        .catch(() => {
+          if (controller.signal.aborted) {
+            return
+          }
+
+          updateItems((latestItems) =>
+            latestItems.map((latestItem) =>
+              latestItem.id === item.id
+                ? {
+                    ...latestItem,
+                    previewState: 'error',
+                    previewError:
+                      'Не удалось создать кадры предпросмотра.',
+                  }
+                : latestItem,
+            ),
+          )
+        })
+        .finally(() => {
+          previewControllersRef.current.delete(item.id)
+          activePreviewIdsRef.current.delete(item.id)
+          pumpPreviewQueue()
+        })
+    }
+  }, [onBackendConnectionChange, updateItems])
+
+  const enqueuePreview = useCallback((item: MediaItem) => {
+    if (
+      queuedPreviewIdsRef.current.has(item.id) ||
+      activePreviewIdsRef.current.has(item.id) ||
+      item.previews
+    ) {
+      return
+    }
+
+    queuedPreviewIdsRef.current.add(item.id)
+    previewQueueRef.current.push(item)
+    pumpPreviewQueue()
+  }, [pumpPreviewQueue])
+
   useEffect(() => () => {
+    isMountedRef.current = false
+
+    for (const controller of metadataControllersRef.current.values()) {
+      controller.abort()
+    }
+
+    for (const controller of previewControllersRef.current.values()) {
+      controller.abort()
+    }
+
     for (const item of itemsRef.current) {
       URL.revokeObjectURL(item.objectUrl)
     }
   }, [])
 
-  const addFiles = (fileList: FileList | File[]) => {
+  const addFiles = useCallback((fileList: FileList | File[]) => {
     const files = Array.from(fileList)
 
-    setItems((currentItems) => {
+    updateItems((currentItems) => {
       const existingKeys = new Set(currentItems.map((item) => (
         getDuplicateKey(item.file)
       )))
@@ -80,6 +195,9 @@ export function useMediaLibrary(
           state: type === 'video' ? 'processing' : 'ready',
           metadata: null,
           error: null,
+          previewState: type === 'video' ? 'idle' : 'ready',
+          previews: null,
+          previewError: null,
         }
 
         nextItems.push(item)
@@ -94,19 +212,35 @@ export function useMediaLibrary(
       }
 
       for (const item of addedVideoItems) {
-        void uploadVideoMetadata(item.file)
+        const controller = new AbortController()
+        metadataControllersRef.current.set(item.id, controller)
+
+        void uploadVideoMetadata(item.file, controller.signal)
           .then((metadata) => {
-            setItems((latestItems) =>
+            updateItems((latestItems) =>
               latestItems.map((latestItem) =>
                 latestItem.id === item.id
-                  ? { ...latestItem, metadata, state: 'ready', error: null }
+                  ? {
+                      ...latestItem,
+                      metadata,
+                      state: 'ready',
+                      error: null,
+                      previewState: 'processing',
+                      previewError: null,
+                    }
                   : latestItem,
               ),
             )
             onBackendConnectionChange(true)
+
+            enqueuePreview(item)
           })
-          .catch(() => {
-            setItems((latestItems) =>
+          .catch((error: unknown) => {
+            if (controller.signal.aborted) {
+              return
+            }
+
+            updateItems((latestItems) =>
               latestItems.map((latestItem) =>
                 latestItem.id === item.id
                   ? {
@@ -118,20 +252,31 @@ export function useMediaLibrary(
                   : latestItem,
               ),
             )
-            onBackendConnectionChange(false)
+            if (!(error instanceof DOMException && error.name === 'AbortError')) {
+              onBackendConnectionChange(false)
+            }
+          })
+          .finally(() => {
+            metadataControllersRef.current.delete(item.id)
           })
       }
 
       return nextItems
     })
-  }
+  }, [
+    activeItemId,
+    enqueuePreview,
+    onBackendConnectionChange,
+    updateItems,
+  ])
 
-  const selectItem = (itemId: string) => {
+  const selectItem = useCallback((itemId: string) => {
     setActiveItemId(itemId)
-  }
+  }, [])
 
-  const removeItem = (itemId: string) => {
-    setItems((currentItems) => {
+  const removeItem = useCallback((itemId: string) => {
+    abortMediaWork(itemId)
+    updateItems((currentItems) => {
       const removedItem = currentItems.find((item) => item.id === itemId)
       const nextItems = currentItems.filter((item) => item.id !== itemId)
 
@@ -145,10 +290,14 @@ export function useMediaLibrary(
 
       return nextItems
     })
-  }
+  }, [abortMediaWork, activeItemId, updateItems])
 
-  const clearLibrary = () => {
-    setItems((currentItems) => {
+  const clearLibrary = useCallback(() => {
+    for (const item of itemsRef.current) {
+      abortMediaWork(item.id)
+    }
+
+    updateItems((currentItems) => {
       for (const item of currentItems) {
         URL.revokeObjectURL(item.objectUrl)
       }
@@ -156,7 +305,7 @@ export function useMediaLibrary(
       return []
     })
     setActiveItemId(null)
-  }
+  }, [abortMediaWork, updateItems])
 
   return {
     items,

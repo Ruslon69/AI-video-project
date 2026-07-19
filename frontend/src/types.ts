@@ -70,6 +70,18 @@ export type MediaType = 'video' | 'image' | 'audio'
 
 export type MediaProcessingState = 'ready' | 'processing' | 'error'
 
+export type VideoPreviewState = 'idle' | 'processing' | 'ready' | 'error'
+
+export type VideoPreviewFrame = {
+  timestamp: number
+  data_url: string
+}
+
+export type VideoPreviews = {
+  poster: VideoPreviewFrame
+  previews: VideoPreviewFrame[]
+}
+
 export type TargetOutputDuration = 30 | 60 | 90 | 120 | 180 | 300 | 600
 
 export type TargetPlatform =
@@ -106,4 +118,7 @@ export type MediaItem = {
   state: MediaProcessingState
   metadata: VideoMetadata | null
   error: string | null
+  previewState: VideoPreviewState
+  previews: VideoPreviews | null
+  previewError: string | null
 }

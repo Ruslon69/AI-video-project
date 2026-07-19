@@ -10,3 +10,13 @@ class VideoMetadata(BaseModel):
     codec: str
     bitrate: int | None
     file_size: int
+
+
+class VideoPreviewFrame(BaseModel):
+    timestamp: float
+    data_url: str
+
+
+class VideoPreviews(BaseModel):
+    poster: VideoPreviewFrame
+    previews: list[VideoPreviewFrame]
