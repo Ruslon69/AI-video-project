@@ -228,6 +228,7 @@ function VideoMetadataPanel({
     ['Битрейт', formatBitrate(metadata.bitrate)],
     ['Размер файла', formatFileSize(metadata.file_size)],
   ]
+  const sceneTimestamps = item.scenes?.timestamps ?? []
 
   return (
     <div className="metadata-panel">
@@ -255,6 +256,36 @@ function VideoMetadataPanel({
           </div>
         ))}
       </dl>
+      <div className="scene-summary" aria-live="polite">
+        <div className="scene-summary-head">
+          <p className="section-label">Сцены</p>
+          <strong>
+            {item.sceneState === 'ready'
+              ? `${item.scenes?.scene_count ?? 0}`
+              : item.sceneState === 'processing'
+                ? '...'
+                : '0'}
+          </strong>
+        </div>
+        {item.sceneState === 'processing' ? (
+          <p className="metadata-message">Определяем смены сцен...</p>
+        ) : null}
+        {item.sceneError ? (
+          <p className="metadata-message metadata-message-error">
+            {item.sceneError}
+          </p>
+        ) : null}
+        {item.sceneState === 'ready' && sceneTimestamps.length === 0 ? (
+          <p className="metadata-message">Смены сцен не найдены.</p>
+        ) : null}
+        {sceneTimestamps.length > 0 ? (
+          <div className="scene-timestamp-list" aria-label="Таймкоды сцен">
+            {sceneTimestamps.map((timestamp) => (
+              <span key={timestamp}>{formatDuration(timestamp)}</span>
+            ))}
+          </div>
+        ) : null}
+      </div>
     </div>
   )
 }

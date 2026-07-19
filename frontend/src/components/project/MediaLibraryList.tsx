@@ -150,6 +150,9 @@ function MediaItemMetadata({ item }: { item: MediaItem }) {
       {orientationLabels[getSourceOrientation(item.metadata)]}
       {item.previewState === 'processing' ? ' · Готовим кадры...' : ''}
       {item.previewError ? ` · ${item.previewError}` : ''}
+      {item.sceneState === 'processing' ? ' · Ищем сцены...' : ''}
+      {item.scenes ? ` · Сцен: ${item.scenes.scene_count}` : ''}
+      {item.sceneError ? ` · ${item.sceneError}` : ''}
     </span>
   )
 }

@@ -9,6 +9,13 @@ def _get_int_env(name: str, default: int) -> int:
         return default
 
 
+def _get_float_env(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, default))
+    except ValueError:
+        return default
+
+
 @dataclass(frozen=True)
 class Settings:
     max_upload_size_bytes: int = _get_int_env(
@@ -20,6 +27,10 @@ class Settings:
     preview_max_width: int = 480
     preview_jpeg_quality: int = 3
     preview_max_count: int = 8
+    scene_detection_threshold: float = _get_float_env(
+        "SCENE_DETECTION_THRESHOLD",
+        0.35,
+    )
 
 
 settings = Settings()

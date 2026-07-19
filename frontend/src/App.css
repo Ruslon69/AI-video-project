@@ -971,6 +971,49 @@ textarea:focus-visible {
   font-size: 14px;
 }
 
+.metadata-message-error {
+  color: var(--danger);
+}
+
+.scene-summary {
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+
+.scene-summary-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.scene-summary-head .section-label {
+  margin: 0;
+}
+
+.scene-summary-head strong {
+  color: var(--text-strong);
+  font-size: 18px;
+}
+
+.scene-timestamp-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.scene-timestamp-list span {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px 8px;
+  color: var(--text-muted);
+  background: var(--panel-strong);
+  font-size: 12px;
+  font-weight: 750;
+}
+
 .compatibility-status {
   display: grid;
   gap: 5px;

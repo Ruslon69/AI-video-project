@@ -86,6 +86,15 @@ class VideoPreviewGenerationError(VideoProcessingError):
         )
 
 
+class VideoSceneDetectionError(VideoProcessingError):
+    def __init__(self):
+        super().__init__(
+            "Could not detect video scenes.",
+            422,
+            "scene_detection_failure",
+        )
+
+
 class VideoProcessingTimeoutError(VideoProcessingError):
     def __init__(self, tool_name: str):
         super().__init__(

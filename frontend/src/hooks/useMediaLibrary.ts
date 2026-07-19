@@ -1,8 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { uploadVideoMetadata, uploadVideoPreviews } from '../services/api'
+import {
+  uploadVideoMetadata,
+  uploadVideoPreviews,
+  uploadVideoScenes,
+} from '../services/api'
 import type { MediaItem, MediaType } from '../types'
 
 const MAX_ACTIVE_PREVIEW_REQUESTS = 2
+const MAX_ACTIVE_SCENE_REQUESTS = 1
 
 function getMediaType(file: File): MediaType | null {
   if (file.type.startsWith('video/')) {
@@ -37,9 +42,13 @@ export function useMediaLibrary(
   const isMountedRef = useRef(true)
   const metadataControllersRef = useRef(new Map<string, AbortController>())
   const previewControllersRef = useRef(new Map<string, AbortController>())
+  const sceneControllersRef = useRef(new Map<string, AbortController>())
   const previewQueueRef = useRef<MediaItem[]>([])
+  const sceneQueueRef = useRef<MediaItem[]>([])
   const queuedPreviewIdsRef = useRef(new Set<string>())
   const activePreviewIdsRef = useRef(new Set<string>())
+  const queuedSceneIdsRef = useRef(new Set<string>())
+  const activeSceneIdsRef = useRef(new Set<string>())
 
   const activeItem = useMemo(
     () => items.find((item) => item.id === activeItemId) ?? null,
@@ -58,16 +67,129 @@ export function useMediaLibrary(
     setItems(updater)
   }, [])
 
+  const clearQueuedMediaWork = useCallback(() => {
+    previewQueueRef.current = []
+    sceneQueueRef.current = []
+    queuedPreviewIdsRef.current.clear()
+    queuedSceneIdsRef.current.clear()
+  }, [])
+
   const abortMediaWork = useCallback((itemId: string) => {
     metadataControllersRef.current.get(itemId)?.abort()
     metadataControllersRef.current.delete(itemId)
     previewControllersRef.current.get(itemId)?.abort()
     previewControllersRef.current.delete(itemId)
+    sceneControllersRef.current.get(itemId)?.abort()
+    sceneControllersRef.current.delete(itemId)
     queuedPreviewIdsRef.current.delete(itemId)
+    queuedSceneIdsRef.current.delete(itemId)
     previewQueueRef.current = previewQueueRef.current.filter((item) => item.id !== itemId)
+    sceneQueueRef.current = sceneQueueRef.current.filter((item) => item.id !== itemId)
   }, [])
 
+  const pumpSceneQueue = useCallback(() => {
+    if (!isMountedRef.current) {
+      return
+    }
+
+    while (
+      activeSceneIdsRef.current.size < MAX_ACTIVE_SCENE_REQUESTS &&
+      sceneQueueRef.current.length > 0
+    ) {
+      const item = sceneQueueRef.current.shift()
+
+      if (!item || !itemsRef.current.some((latestItem) => latestItem.id === item.id)) {
+        continue
+      }
+
+      queuedSceneIdsRef.current.delete(item.id)
+      activeSceneIdsRef.current.add(item.id)
+
+      const controller = new AbortController()
+      sceneControllersRef.current.set(item.id, controller)
+
+      void uploadVideoScenes(item.file, controller.signal)
+        .then((scenes) => {
+          if (
+            controller.signal.aborted ||
+            !itemsRef.current.some((latestItem) => latestItem.id === item.id)
+          ) {
+            return
+          }
+
+          updateItems((latestItems) =>
+            latestItems.map((latestItem) =>
+              latestItem.id === item.id
+                ? {
+                    ...latestItem,
+                    scenes,
+                    sceneState: 'ready',
+                    sceneError: null,
+                  }
+                : latestItem,
+            ),
+          )
+          onBackendConnectionChange(true)
+        })
+        .catch(() => {
+          if (controller.signal.aborted) {
+            return
+          }
+
+          updateItems((latestItems) =>
+            latestItems.map((latestItem) =>
+              latestItem.id === item.id
+                ? {
+                    ...latestItem,
+                    sceneState: 'error',
+                    sceneError: 'Не удалось определить смены сцен.',
+                  }
+                : latestItem,
+            ),
+          )
+        })
+        .finally(() => {
+          sceneControllersRef.current.delete(item.id)
+          activeSceneIdsRef.current.delete(item.id)
+          if (isMountedRef.current) {
+            pumpSceneQueue()
+          }
+        })
+    }
+  }, [onBackendConnectionChange, updateItems])
+
+  const enqueueSceneDetection = useCallback((item: MediaItem) => {
+    if (
+      queuedSceneIdsRef.current.has(item.id) ||
+      activeSceneIdsRef.current.has(item.id) ||
+      itemsRef.current.some((latestItem) => (
+        latestItem.id === item.id && latestItem.scenes
+      ))
+    ) {
+      return
+    }
+
+    queuedSceneIdsRef.current.add(item.id)
+    sceneQueueRef.current.push(item)
+    updateItems((latestItems) =>
+      latestItems.map((latestItem) =>
+        latestItem.id === item.id
+          ? {
+              ...latestItem,
+              sceneState: 'processing',
+              sceneError: null,
+            }
+          : latestItem,
+      ),
+    )
+    pumpSceneQueue()
+  }, [pumpSceneQueue, updateItems])
+
   const pumpPreviewQueue = useCallback(() => {
+    if (!isMountedRef.current) {
+      return
+    }
+
     while (
       activePreviewIdsRef.current.size < MAX_ACTIVE_PREVIEW_REQUESTS &&
       previewQueueRef.current.length > 0
@@ -106,6 +228,7 @@ export function useMediaLibrary(
             ),
           )
           onBackendConnectionChange(true)
+          enqueueSceneDetection(item)
         })
         .catch(() => {
           if (controller.signal.aborted) {
@@ -128,10 +251,12 @@ export function useMediaLibrary(
         .finally(() => {
           previewControllersRef.current.delete(item.id)
           activePreviewIdsRef.current.delete(item.id)
-          pumpPreviewQueue()
+          if (isMountedRef.current) {
+            pumpPreviewQueue()
+          }
         })
     }
-  }, [onBackendConnectionChange, updateItems])
+  }, [enqueueSceneDetection, onBackendConnectionChange, updateItems])
 
   const enqueuePreview = useCallback((item: MediaItem) => {
     if (
@@ -149,6 +274,7 @@ export function useMediaLibrary(
 
   useEffect(() => () => {
     isMountedRef.current = false
+    clearQueuedMediaWork()
 
     for (const controller of metadataControllersRef.current.values()) {
       controller.abort()
@@ -158,10 +284,14 @@ export function useMediaLibrary(
       controller.abort()
     }
 
+    for (const controller of sceneControllersRef.current.values()) {
+      controller.abort()
+    }
+
     for (const item of itemsRef.current) {
       URL.revokeObjectURL(item.objectUrl)
     }
-  }, [])
+  }, [clearQueuedMediaWork])
 
   const addFiles = useCallback((fileList: FileList | File[]) => {
     const files = Array.from(fileList)
@@ -198,6 +328,9 @@ export function useMediaLibrary(
           previewState: type === 'video' ? 'idle' : 'ready',
           previews: null,
           previewError: null,
+          sceneState: type === 'video' ? 'idle' : 'ready',
+          scenes: null,
+          sceneError: null,
         }
 
         nextItems.push(item)
@@ -293,6 +426,8 @@ export function useMediaLibrary(
   }, [abortMediaWork, activeItemId, updateItems])
 
   const clearLibrary = useCallback(() => {
+    clearQueuedMediaWork()
+
     for (const item of itemsRef.current) {
       abortMediaWork(item.id)
     }
@@ -305,7 +440,7 @@ export function useMediaLibrary(
       return []
     })
     setActiveItemId(null)
-  }, [abortMediaWork, updateItems])
+  }, [abortMediaWork, clearQueuedMediaWork, updateItems])
 
   return {
     items,

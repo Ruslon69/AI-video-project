@@ -20,3 +20,8 @@ class VideoPreviewFrame(BaseModel):
 class VideoPreviews(BaseModel):
     poster: VideoPreviewFrame
     previews: list[VideoPreviewFrame]
+
+
+class VideoScenes(BaseModel):
+    scene_count: int
+    timestamps: list[float]
