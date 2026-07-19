@@ -2,11 +2,17 @@ import logging
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
 
-from app.schemas.video import VideoMetadata, VideoPreviews, VideoScenes
+from app.schemas.video import (
+    VideoMetadata,
+    VideoPreviews,
+    VideoScenes,
+    VideoTranscription,
+)
 from app.services.video_errors import VideoProcessingError
 from app.services.video_metadata import extract_video_metadata
 from app.services.video_previews import generate_video_previews
 from app.services.video_scenes import detect_video_scenes
+from app.services.video_transcription import transcribe_video
 
 router = APIRouter(prefix="/video", tags=["video"])
 logger = logging.getLogger(__name__)
@@ -41,5 +47,13 @@ async def video_previews(file: UploadFile = File(...)) -> VideoPreviews:
 async def video_scenes(file: UploadFile = File(...)) -> VideoScenes:
     try:
         return await detect_video_scenes(file)
+    except VideoProcessingError as exc:
+        raise _to_http_error(exc) from exc
+
+
+@router.post("/transcription", response_model=VideoTranscription)
+async def video_transcription(file: UploadFile = File(...)) -> VideoTranscription:
+    try:
+        return await transcribe_video(file)
     except VideoProcessingError as exc:
         raise _to_http_error(exc) from exc

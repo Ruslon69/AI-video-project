@@ -3,11 +3,13 @@ import {
   uploadVideoMetadata,
   uploadVideoPreviews,
   uploadVideoScenes,
+  uploadVideoTranscription,
 } from '../services/api'
 import type { MediaItem, MediaType } from '../types'
 
 const MAX_ACTIVE_PREVIEW_REQUESTS = 2
 const MAX_ACTIVE_SCENE_REQUESTS = 1
+const MAX_ACTIVE_TRANSCRIPTION_REQUESTS = 1
 
 function getMediaType(file: File): MediaType | null {
   if (file.type.startsWith('video/')) {
@@ -43,12 +45,16 @@ export function useMediaLibrary(
   const metadataControllersRef = useRef(new Map<string, AbortController>())
   const previewControllersRef = useRef(new Map<string, AbortController>())
   const sceneControllersRef = useRef(new Map<string, AbortController>())
+  const transcriptionControllersRef = useRef(new Map<string, AbortController>())
   const previewQueueRef = useRef<MediaItem[]>([])
   const sceneQueueRef = useRef<MediaItem[]>([])
+  const transcriptionQueueRef = useRef<MediaItem[]>([])
   const queuedPreviewIdsRef = useRef(new Set<string>())
   const activePreviewIdsRef = useRef(new Set<string>())
   const queuedSceneIdsRef = useRef(new Set<string>())
   const activeSceneIdsRef = useRef(new Set<string>())
+  const queuedTranscriptionIdsRef = useRef(new Set<string>())
+  const activeTranscriptionIdsRef = useRef(new Set<string>())
 
   const activeItem = useMemo(
     () => items.find((item) => item.id === activeItemId) ?? null,
@@ -70,8 +76,10 @@ export function useMediaLibrary(
   const clearQueuedMediaWork = useCallback(() => {
     previewQueueRef.current = []
     sceneQueueRef.current = []
+    transcriptionQueueRef.current = []
     queuedPreviewIdsRef.current.clear()
     queuedSceneIdsRef.current.clear()
+    queuedTranscriptionIdsRef.current.clear()
   }, [])
 
   const abortMediaWork = useCallback((itemId: string) => {
@@ -81,11 +89,115 @@ export function useMediaLibrary(
     previewControllersRef.current.delete(itemId)
     sceneControllersRef.current.get(itemId)?.abort()
     sceneControllersRef.current.delete(itemId)
+    transcriptionControllersRef.current.get(itemId)?.abort()
+    transcriptionControllersRef.current.delete(itemId)
     queuedPreviewIdsRef.current.delete(itemId)
     queuedSceneIdsRef.current.delete(itemId)
+    queuedTranscriptionIdsRef.current.delete(itemId)
     previewQueueRef.current = previewQueueRef.current.filter((item) => item.id !== itemId)
     sceneQueueRef.current = sceneQueueRef.current.filter((item) => item.id !== itemId)
+    transcriptionQueueRef.current = transcriptionQueueRef.current.filter(
+      (item) => item.id !== itemId,
+    )
   }, [])
+
+  const pumpTranscriptionQueue = useCallback(() => {
+    if (!isMountedRef.current) {
+      return
+    }
+
+    while (
+      activeTranscriptionIdsRef.current.size < MAX_ACTIVE_TRANSCRIPTION_REQUESTS &&
+      transcriptionQueueRef.current.length > 0
+    ) {
+      const item = transcriptionQueueRef.current.shift()
+
+      if (!item || !itemsRef.current.some((latestItem) => latestItem.id === item.id)) {
+        continue
+      }
+
+      queuedTranscriptionIdsRef.current.delete(item.id)
+      activeTranscriptionIdsRef.current.add(item.id)
+
+      const controller = new AbortController()
+      transcriptionControllersRef.current.set(item.id, controller)
+
+      void uploadVideoTranscription(item.file, controller.signal)
+        .then((transcription) => {
+          if (
+            controller.signal.aborted ||
+            !itemsRef.current.some((latestItem) => latestItem.id === item.id)
+          ) {
+            return
+          }
+
+          updateItems((latestItems) =>
+            latestItems.map((latestItem) =>
+              latestItem.id === item.id
+                ? {
+                    ...latestItem,
+                    transcription,
+                    transcriptionState: 'ready',
+                    transcriptionError: null,
+                  }
+                : latestItem,
+            ),
+          )
+          onBackendConnectionChange(true)
+        })
+        .catch(() => {
+          if (controller.signal.aborted) {
+            return
+          }
+
+          updateItems((latestItems) =>
+            latestItems.map((latestItem) =>
+              latestItem.id === item.id
+                ? {
+                    ...latestItem,
+                    transcriptionState: 'error',
+                    transcriptionError: 'Не удалось расшифровать речь.',
+                  }
+                : latestItem,
+            ),
+          )
+        })
+        .finally(() => {
+          transcriptionControllersRef.current.delete(item.id)
+          activeTranscriptionIdsRef.current.delete(item.id)
+          if (isMountedRef.current) {
+            pumpTranscriptionQueue()
+          }
+        })
+    }
+  }, [onBackendConnectionChange, updateItems])
+
+  const enqueueTranscription = useCallback((item: MediaItem) => {
+    if (
+      queuedTranscriptionIdsRef.current.has(item.id) ||
+      activeTranscriptionIdsRef.current.has(item.id) ||
+      itemsRef.current.some((latestItem) => (
+        latestItem.id === item.id && latestItem.transcription
+      ))
+    ) {
+      return
+    }
+
+    queuedTranscriptionIdsRef.current.add(item.id)
+    transcriptionQueueRef.current.push(item)
+    updateItems((latestItems) =>
+      latestItems.map((latestItem) =>
+        latestItem.id === item.id
+          ? {
+              ...latestItem,
+              transcriptionState: 'processing',
+              transcriptionError: null,
+            }
+          : latestItem,
+      ),
+    )
+    pumpTranscriptionQueue()
+  }, [pumpTranscriptionQueue, updateItems])
 
   const pumpSceneQueue = useCallback(() => {
     if (!isMountedRef.current) {
@@ -130,6 +242,7 @@ export function useMediaLibrary(
             ),
           )
           onBackendConnectionChange(true)
+          enqueueTranscription(item)
         })
         .catch(() => {
           if (controller.signal.aborted) {
@@ -156,7 +269,7 @@ export function useMediaLibrary(
           }
         })
     }
-  }, [onBackendConnectionChange, updateItems])
+  }, [enqueueTranscription, onBackendConnectionChange, updateItems])
 
   const enqueueSceneDetection = useCallback((item: MediaItem) => {
     if (
@@ -288,6 +401,10 @@ export function useMediaLibrary(
       controller.abort()
     }
 
+    for (const controller of transcriptionControllersRef.current.values()) {
+      controller.abort()
+    }
+
     for (const item of itemsRef.current) {
       URL.revokeObjectURL(item.objectUrl)
     }
@@ -331,6 +448,9 @@ export function useMediaLibrary(
           sceneState: type === 'video' ? 'idle' : 'ready',
           scenes: null,
           sceneError: null,
+          transcriptionState: type === 'video' ? 'idle' : 'ready',
+          transcription: null,
+          transcriptionError: null,
         }
 
         nextItems.push(item)

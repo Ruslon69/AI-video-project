@@ -229,6 +229,7 @@ function VideoMetadataPanel({
     ['Размер файла', formatFileSize(metadata.file_size)],
   ]
   const sceneTimestamps = item.scenes?.timestamps ?? []
+  const transcription = item.transcription
 
   return (
     <div className="metadata-panel">
@@ -284,6 +285,32 @@ function VideoMetadataPanel({
               <span key={timestamp}>{formatDuration(timestamp)}</span>
             ))}
           </div>
+        ) : null}
+      </div>
+      <div className="scene-summary" aria-live="polite">
+        <div className="scene-summary-head">
+          <p className="section-label">Транскрипция</p>
+          <strong>
+            {item.transcriptionState === 'ready'
+              ? '✓'
+              : item.transcriptionState === 'processing'
+                ? '...'
+                : '0'}
+          </strong>
+        </div>
+        {item.transcriptionState === 'processing' ? (
+          <p className="metadata-message">Расшифровываем речь...</p>
+        ) : null}
+        {item.transcriptionError ? (
+          <p className="metadata-message metadata-message-error">
+            {item.transcriptionError}
+          </p>
+        ) : null}
+        {transcription ? (
+          <p className="metadata-message">
+            ✓ transcription complete · {transcription.segments.length} segments ·{' '}
+            language: {transcription.language}
+          </p>
         ) : null}
       </div>
     </div>

@@ -95,6 +95,24 @@ class VideoSceneDetectionError(VideoProcessingError):
         )
 
 
+class VideoAudioExtractionError(VideoProcessingError):
+    def __init__(self):
+        super().__init__(
+            "Could not extract audio from the uploaded video.",
+            422,
+            "audio_extraction_failure",
+        )
+
+
+class VideoTranscriptionError(VideoProcessingError):
+    def __init__(self):
+        super().__init__(
+            "Could not transcribe the uploaded video.",
+            422,
+            "transcription_failure",
+        )
+
+
 class VideoProcessingTimeoutError(VideoProcessingError):
     def __init__(self, tool_name: str):
         super().__init__(

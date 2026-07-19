@@ -25,3 +25,16 @@ class VideoPreviews(BaseModel):
 class VideoScenes(BaseModel):
     scene_count: int
     timestamps: list[float]
+
+
+class VideoTranscriptSegment(BaseModel):
+    id: int
+    start: float
+    end: float
+    text: str
+
+
+class VideoTranscription(BaseModel):
+    language: str
+    duration: float
+    segments: list[VideoTranscriptSegment]

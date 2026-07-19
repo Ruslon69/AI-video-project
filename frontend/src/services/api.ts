@@ -1,4 +1,9 @@
-import type { VideoMetadata, VideoPreviews, VideoScenes } from '../types'
+import type {
+  VideoMetadata,
+  VideoPreviews,
+  VideoScenes,
+  VideoTranscription,
+} from '../types'
 
 const API_BASE_URL = 'http://127.0.0.1:8000'
 
@@ -61,6 +66,21 @@ export async function uploadVideoScenes(file: File, signal?: AbortSignal) {
 
   return apiFetch<VideoScenes>({
     path: '/video/scenes',
+    method: 'POST',
+    body: formData,
+    signal,
+  })
+}
+
+export async function uploadVideoTranscription(
+  file: File,
+  signal?: AbortSignal,
+) {
+  const formData = new FormData()
+  formData.append('file', file)
+
+  return apiFetch<VideoTranscription>({
+    path: '/video/transcription',
     method: 'POST',
     body: formData,
     signal,

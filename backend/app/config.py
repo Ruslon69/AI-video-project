@@ -31,6 +31,7 @@ class Settings:
         "SCENE_DETECTION_THRESHOLD",
         0.35,
     )
+    whisper_model: str = os.getenv("WHISPER_MODEL", "base")
 
 
 settings = Settings()

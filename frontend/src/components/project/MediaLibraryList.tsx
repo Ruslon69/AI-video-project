@@ -153,6 +153,9 @@ function MediaItemMetadata({ item }: { item: MediaItem }) {
       {item.sceneState === 'processing' ? ' · Ищем сцены...' : ''}
       {item.scenes ? ` · Сцен: ${item.scenes.scene_count}` : ''}
       {item.sceneError ? ` · ${item.sceneError}` : ''}
+      {item.transcriptionState === 'processing' ? ' · Расшифровываем речь...' : ''}
+      {item.transcription ? ' · Транскрипция готова' : ''}
+      {item.transcriptionError ? ` · ${item.transcriptionError}` : ''}
     </span>
   )
 }

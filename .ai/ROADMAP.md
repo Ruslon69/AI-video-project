@@ -12,14 +12,14 @@ This roadmap describes current foundations and likely future areas. Future areas
 - Project output settings
 - Preview generation for video items
 - Scene Detection Foundation
+- Whisper transcription foundation
 
 ## Recommended Next Pipeline Order
 
-1. Whisper transcription foundation
-2. Scene and speech analysis
-3. Timeline segment generation
-4. AI editing decisions
-5. Export pipeline
+1. Scene and speech analysis
+2. Timeline segment generation
+3. AI editing decisions
+4. Export pipeline
 
 ## Likely Future Areas
 

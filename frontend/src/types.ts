@@ -74,6 +74,8 @@ export type VideoPreviewState = 'idle' | 'processing' | 'ready' | 'error'
 
 export type VideoSceneDetectionState = 'idle' | 'processing' | 'ready' | 'error'
 
+export type VideoTranscriptionState = 'idle' | 'processing' | 'ready' | 'error'
+
 export type VideoPreviewFrame = {
   timestamp: number
   data_url: string
@@ -87,6 +89,19 @@ export type VideoPreviews = {
 export type VideoScenes = {
   scene_count: number
   timestamps: number[]
+}
+
+export type VideoTranscriptSegment = {
+  id: number
+  start: number
+  end: number
+  text: string
+}
+
+export type VideoTranscription = {
+  language: string
+  duration: number
+  segments: VideoTranscriptSegment[]
 }
 
 export type TargetOutputDuration = 30 | 60 | 90 | 120 | 180 | 300 | 600
@@ -131,4 +146,7 @@ export type MediaItem = {
   sceneState: VideoSceneDetectionState
   scenes: VideoScenes | null
   sceneError: string | null
+  transcriptionState: VideoTranscriptionState
+  transcription: VideoTranscription | null
+  transcriptionError: string | null
 }

@@ -71,16 +71,17 @@ Dependencies: ffprobe validation, FFmpeg scene filter, one-job frontend/backend 
 Failure cases: FFmpeg unavailable, FFmpeg failure, timeout, invalid video, upload too large, request abort.
 Future improvements: Cached scene outputs, progress reporting, configurable threshold UX, and segment generation.
 
-## Future Stages
-
 ### Whisper
 
 Purpose: Transcribe speech from video or audio sources.
 Input: Source media audio.
 Output: Transcript text with timestamps.
-Dependencies: Whisper or compatible local transcription engine.
-Failure cases: Missing audio, unsupported audio stream, transcription timeout, model unavailable, low-quality audio.
-Future improvements: Speaker labels, language detection, subtitle-ready output, and persistent transcription jobs.
+Dependencies: FFmpeg audio extraction and local open-source Whisper.
+Failure cases: Missing audio, unsupported audio stream, FFmpeg timeout, model unavailable, low-quality audio, transcription failure.
+Operational note: The configured Whisper model runs locally and may need to be downloaded by Whisper on first real use if it is not already available in the local model cache.
+Future improvements: Speaker labels, subtitle-ready output, transcription caching, progress reporting, and persistent transcription jobs.
+
+## Future Stages
 
 ### Scene + Speech Analysis
 
