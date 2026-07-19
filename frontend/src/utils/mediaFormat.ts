@@ -1,6 +1,16 @@
 export function formatDuration(seconds: number) {
-  const minutes = Math.floor(seconds / 60)
-  const remainingSeconds = Math.round(seconds % 60)
+  const totalSeconds = Math.max(0, Math.round(seconds))
+  const hours = Math.floor(totalSeconds / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
+  const remainingSeconds = totalSeconds % 60
+
+  if (hours > 0) {
+    return [
+      hours,
+      minutes.toString().padStart(2, '0'),
+      remainingSeconds.toString().padStart(2, '0'),
+    ].join(':')
+  }
 
   return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`
 }

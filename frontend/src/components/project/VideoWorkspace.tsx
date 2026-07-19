@@ -1,4 +1,4 @@
-import { useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type {
   EditingSubstage,
   MediaItem,
@@ -16,6 +16,7 @@ import {
   isVideoCompatibleWithTarget,
 } from '../../utils/projectSettings'
 import { statusLabels } from '../../utils/projectState'
+import { VideoTimeline } from '../timeline/VideoTimeline'
 
 type VideoWorkspaceProps = {
   activeItem: MediaItem | null
@@ -53,6 +54,71 @@ export function VideoWorkspace({
 
 function MediaPreview({ item }: { item: MediaItem | null }) {
   const videoRef = useRef<HTMLVideoElement | null>(null)
+  const animationFrameRef = useRef<number | null>(null)
+  const [currentTime, setCurrentTime] = useState(0)
+  const [videoDuration, setVideoDuration] = useState(0)
+
+  const stopPlayheadUpdates = useCallback(() => {
+    if (animationFrameRef.current !== null) {
+      window.cancelAnimationFrame(animationFrameRef.current)
+      animationFrameRef.current = null
+    }
+  }, [])
+
+  const syncPlaybackState = useCallback(() => {
+    const video = videoRef.current
+    if (!video) {
+      return
+    }
+
+    setCurrentTime(video.currentTime)
+    setVideoDuration(Number.isFinite(video.duration) ? video.duration : 0)
+  }, [])
+
+  const startPlayheadUpdates = useCallback(() => {
+    stopPlayheadUpdates()
+
+    const update = () => {
+      const video = videoRef.current
+      if (!video || video.paused || video.ended) {
+        animationFrameRef.current = null
+        return
+      }
+
+      setCurrentTime((previousTime) => {
+        if (Math.abs(previousTime - video.currentTime) < 0.1) {
+          return previousTime
+        }
+
+        return video.currentTime
+      })
+      animationFrameRef.current = window.requestAnimationFrame(update)
+    }
+
+    animationFrameRef.current = window.requestAnimationFrame(update)
+  }, [stopPlayheadUpdates])
+
+  const seekVideo = useCallback((timestamp: number) => {
+    const video = videoRef.current
+    const duration = video && Number.isFinite(video.duration)
+      ? video.duration
+      : item?.metadata?.duration ?? 0
+    const clampedTimestamp = Math.min(Math.max(timestamp, 0), Math.max(duration, 0))
+
+    if (video) {
+      video.currentTime = clampedTimestamp
+    }
+
+    setCurrentTime(clampedTimestamp)
+  }, [item?.metadata?.duration])
+
+  useEffect(() => {
+    stopPlayheadUpdates()
+    setCurrentTime(0)
+    setVideoDuration(item?.metadata?.duration ?? 0)
+
+    return stopPlayheadUpdates
+  }, [item?.id, item?.metadata?.duration, stopPlayheadUpdates])
 
   if (!item) {
     return (
@@ -75,16 +141,27 @@ function MediaPreview({ item }: { item: MediaItem | null }) {
           src={item.objectUrl}
           controls
           poster={item.previews?.poster.data_url}
+          onLoadedMetadata={syncPlaybackState}
+          onDurationChange={syncPlaybackState}
+          onPlay={startPlayheadUpdates}
+          onPause={syncPlaybackState}
+          onEnded={() => {
+            stopPlayheadUpdates()
+            syncPlaybackState()
+          }}
+          onSeeked={syncPlaybackState}
         >
           Ваш браузер не поддерживает видео.
         </video>
+        <VideoTimeline
+          item={item}
+          currentTime={currentTime}
+          duration={videoDuration || item.metadata?.duration || 0}
+          onSeek={seekVideo}
+        />
         <VideoFilmstrip
           item={item}
-          onSeek={(timestamp) => {
-            if (videoRef.current) {
-              videoRef.current.currentTime = timestamp
-            }
-          }}
+          onSeek={seekVideo}
         />
       </div>
     )
