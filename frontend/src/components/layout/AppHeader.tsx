@@ -2,6 +2,7 @@ import type { ThemePreference } from '../../types'
 
 type AppHeaderProps = {
   themePreference: ThemePreference
+  isBackendConnected: boolean
   onThemeChange: (theme: ThemePreference) => void
   onAssistantOpen: () => void
 }
@@ -14,6 +15,7 @@ const themeLabels: Record<ThemePreference, string> = {
 
 export function AppHeader({
   themePreference,
+  isBackendConnected,
   onThemeChange,
   onAssistantOpen,
 }: AppHeaderProps) {
@@ -25,6 +27,16 @@ export function AppHeader({
       </div>
 
       <div className="header-actions">
+        <div
+          className="backend-status"
+          data-connected={isBackendConnected}
+          aria-live="polite"
+        >
+          <span aria-hidden="true">{isBackendConnected ? '🟢' : '🔴'}</span>
+          <span>
+            {isBackendConnected ? 'Backend Connected' : 'Backend Offline'}
+          </span>
+        </div>
         <div className="theme-switcher" aria-label="Переключатель темы">
           {(['light', 'dark', 'system'] as ThemePreference[]).map((theme) => (
             <button

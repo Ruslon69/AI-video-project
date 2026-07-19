@@ -10,6 +10,8 @@ import { initialProjectState } from './data/stages'
 import { helpContent } from './data/helpContent'
 import { useLocalStorageState } from './hooks/useLocalStorageState'
 import { useTheme } from './hooks/useTheme'
+import { checkBackendHealth, uploadVideoMetadata } from './services/api'
+import type { VideoMetadata } from './types'
 import {
   createReviewVersion,
   ensureProjectState,
@@ -35,6 +37,10 @@ function App() {
   const [isAssistantOpen, setIsAssistantOpen] = useState(false)
   const [assistantDraftQuestion, setAssistantDraftQuestion] = useState('')
   const [openHelpId, setOpenHelpId] = useState<string | null>(null)
+  const [isBackendConnected, setIsBackendConnected] = useState(false)
+  const [videoMetadata, setVideoMetadata] = useState<VideoMetadata | null>(null)
+  const [isMetadataLoading, setIsMetadataLoading] = useState(false)
+  const [metadataError, setMetadataError] = useState<string | null>(null)
 
   const selectedStage = useMemo(
     () => getSelectedStage(projectState),
@@ -49,6 +55,10 @@ function App() {
     [projectState.stages],
   )
   const activeHelpContent = openHelpId ? helpContent[openHelpId] : null
+
+  useEffect(() => {
+    void checkBackendHealth().then(setIsBackendConnected)
+  }, [])
 
   useEffect(() => {
     if (!videoFile) {
@@ -92,10 +102,36 @@ function App() {
     }))
   }
 
+  const handleFileSelect = (file: File | null) => {
+    setVideoFile(file)
+    setVideoMetadata(null)
+    setMetadataError(null)
+
+    if (!file) {
+      setIsMetadataLoading(false)
+      return
+    }
+
+    setIsMetadataLoading(true)
+    void uploadVideoMetadata(file)
+      .then((metadata) => {
+        setVideoMetadata(metadata)
+        setIsBackendConnected(true)
+      })
+      .catch(() => {
+        setMetadataError(
+          'Не удалось прочитать метаданные видео. Проверьте файл или запустите backend.',
+        )
+        setIsBackendConnected(false)
+      })
+      .finally(() => setIsMetadataLoading(false))
+  }
+
   return (
     <div className="app-shell">
       <AppHeader
         themePreference={themePreference}
+        isBackendConnected={isBackendConnected}
         onThemeChange={setThemePreference}
         onAssistantOpen={() => setIsAssistantOpen(true)}
       />
@@ -111,7 +147,7 @@ function App() {
           selectedFileName={videoFile?.name ?? null}
           stats={stats}
           openHelpId={openHelpId}
-          onFileSelect={setVideoFile}
+          onFileSelect={handleFileSelect}
           onStageSelect={handleStageSelect}
           onStageToggle={handleStageToggle}
           onHelpOpenChange={(helpId, isOpen) =>
@@ -131,6 +167,9 @@ function App() {
         <VideoWorkspace
           fileName={videoFile?.name ?? null}
           videoUrl={videoUrl}
+          metadata={videoMetadata}
+          isMetadataLoading={isMetadataLoading}
+          metadataError={metadataError}
           selectedSubstage={selectedSubstage}
         />
         <ReviewPanel

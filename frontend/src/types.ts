@@ -54,3 +54,14 @@ export type ChatMessage = {
   role: 'user' | 'assistant'
   text: string
 }
+
+export type VideoMetadata = {
+  filename: string
+  duration: number
+  width: number
+  height: number
+  fps: number
+  codec: string
+  bitrate: number | null
+  file_size: number
+}
