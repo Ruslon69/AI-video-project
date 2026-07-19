@@ -1091,8 +1091,7 @@ textarea:focus-visible {
   background: var(--panel-strong);
 }
 
-.video-timeline-head,
-.timeline-ruler {
+.video-timeline-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1110,77 +1109,256 @@ textarea:focus-visible {
   font-weight: 750;
 }
 
-.timeline-seek-area {
+.timeline-zoom {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 2px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 3px;
+  background: var(--surface-soft);
+}
+
+.timeline-zoom-button {
+  min-height: 28px;
+  border: 0;
+  border-radius: 5px;
+  padding: 0 8px;
+  color: var(--text-muted);
+  background: transparent;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.timeline-zoom-button[data-active='true'] {
+  color: var(--text-strong);
+  background: var(--panel-strong);
+}
+
+.timeline-body {
   display: grid;
+  grid-template-columns: 82px minmax(0, 1fr);
   gap: 8px;
   border: 1px solid var(--border);
   border-radius: 7px;
   padding: 10px;
   background: var(--surface-soft);
+}
+
+.timeline-label-column {
+  display: grid;
+  grid-template-rows: 28px repeat(3, 46px);
+  gap: 6px;
+}
+
+.timeline-ruler-spacer,
+.timeline-track-label {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-strong);
+}
+
+.timeline-ruler-spacer {
+  opacity: 0.72;
+}
+
+.timeline-track-label {
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.timeline-scroll-viewport {
+  width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: visible;
+  scrollbar-color: var(--border-strong) transparent;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+}
+
+.timeline-time-canvas {
+  position: relative;
+  display: grid;
+  min-width: 100%;
+  gap: 6px;
   cursor: pointer;
 }
 
-.timeline-seek-area:focus-visible {
+.timeline-time-canvas:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
 
-.timeline-track {
+.timeline-ruler {
   position: relative;
-  height: 38px;
+  height: 28px;
+  overflow: visible;
+  border-bottom: 1px solid var(--border);
+}
+
+.timeline-ruler-tick-major,
+.timeline-ruler-tick-minor {
+  position: absolute;
+  bottom: 0;
+  width: 1px;
+  background: var(--border-strong);
+  transform: translateX(-0.5px);
+}
+
+.timeline-ruler-tick-major {
+  top: 5px;
+}
+
+.timeline-ruler-tick-minor {
+  top: 17px;
+  opacity: 0.72;
+}
+
+.timeline-ruler-tick-major span {
+  position: absolute;
+  top: -2px;
+  left: 5px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.timeline-track-stack {
+  position: relative;
+  display: grid;
+  gap: 6px;
+}
+
+.timeline-track {
+  min-width: 0;
+}
+
+.timeline-track-lane {
+  position: relative;
+  height: 46px;
+  box-sizing: border-box;
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--surface);
 }
 
-.timeline-base-segment,
-.timeline-scene-segment {
+.timeline-video-strip {
   position: absolute;
-  top: 0;
-  bottom: 0;
+  inset: 5px 0;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background:
+    linear-gradient(90deg, rgba(47, 180, 124, 0.14), rgba(50, 103, 200, 0.12)),
+    var(--panel-strong);
+}
+
+.timeline-item,
+.timeline-empty-item {
+  position: absolute;
+  top: 5px;
+  bottom: 5px;
+  box-sizing: border-box;
   display: inline-flex;
   min-width: 2px;
   align-items: center;
   justify-content: center;
-  border-right: 1px solid var(--panel-strong);
+  border: 1px solid var(--border);
+  border-radius: 5px;
   color: var(--text-strong);
+  background: var(--panel-strong);
   font-size: 11px;
   font-weight: 800;
   overflow: hidden;
+  padding: 0 6px;
+  text-align: left;
   white-space: nowrap;
 }
 
-.timeline-base-segment {
-  right: 0;
-  left: 0;
-  padding: 0 10px;
-  color: var(--text-muted);
-  background: var(--panel-strong);
+.timeline-item {
+  cursor: pointer;
 }
 
-.timeline-scene-segment {
+.timeline-item:hover,
+.timeline-item:focus-visible,
+.timeline-item[data-selected='true'] {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.timeline-item[data-selected='true'] {
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.timeline-empty-item {
+  right: 0;
+  left: 0;
+  color: var(--text-muted);
+}
+
+.timeline-item-scene {
   background: rgba(47, 180, 124, 0.16);
 }
 
-.timeline-scene-segment:nth-child(even) {
+.timeline-item-scene:nth-child(even) {
   background: rgba(50, 103, 200, 0.14);
 }
 
-.timeline-scene-segment span {
+.timeline-item-transcript {
+  justify-content: flex-start;
+  background: rgba(230, 182, 74, 0.14);
+}
+
+.timeline-item-video-preview {
+  align-items: stretch;
+  justify-content: flex-start;
+  width: 58px;
+  min-width: 58px;
+  padding: 3px;
+  transform: translateX(-50%);
+}
+
+.timeline-item-video-preview img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 3px;
+  object-fit: cover;
+}
+
+.timeline-item-video-preview span {
+  position: absolute;
+  right: 3px;
+  bottom: 2px;
+  left: 3px;
+  border-radius: 3px;
+  padding: 1px 2px;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.62);
+  font-size: 10px;
+}
+
+.timeline-item span {
   min-width: 0;
-  padding: 0 5px;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .timeline-playhead {
   position: absolute;
-  top: -1px;
-  bottom: -1px;
+  top: 0;
+  bottom: 0;
   z-index: 2;
   width: 2px;
   background: var(--danger);
+  pointer-events: none;
   transform: translateX(-1px);
 }
 
@@ -1195,35 +1373,6 @@ textarea:focus-visible {
   background: var(--danger);
   content: '';
   transform: translate(-50%, -45%);
-}
-
-.timeline-preview-markers {
-  position: relative;
-  height: 42px;
-}
-
-.timeline-preview-marker {
-  position: absolute;
-  top: 0;
-  width: 56px;
-  overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  padding: 0;
-  background: #000;
-  cursor: pointer;
-  transform: translateX(-50%);
-}
-
-.timeline-preview-marker:hover {
-  border-color: var(--accent);
-}
-
-.timeline-preview-marker img {
-  display: block;
-  width: 100%;
-  aspect-ratio: 16 / 9;
-  object-fit: cover;
 }
 
 .image-player {
@@ -1812,7 +1961,7 @@ input::placeholder {
     box-shadow: none;
   }
 
-  .timeline-scene-segment span {
+  .timeline-item-scene span {
     display: none;
   }
 
