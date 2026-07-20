@@ -25,19 +25,22 @@ type VideoWorkspaceProps = {
   outputSettings: ProjectOutputSettings
   selectedSubstage: EditingSubstage
   aiSuggestions: AISuggestion[]
-  selectedAISuggestionId: string | null
+  selectedAISuggestionIds: string[]
+  activeAISuggestionId: string | null
   onReconnectSource: () => void
-  onAISuggestionSelect: (suggestionId: string) => void
+  onAISuggestionActivate: (suggestionId: string) => void
 }
 
+// Coordinates active media preview, player seeking, timeline display, and analysis summaries.
 export function VideoWorkspace({
   activeItem,
   outputSettings,
   selectedSubstage,
   aiSuggestions,
-  selectedAISuggestionId,
+  selectedAISuggestionIds,
+  activeAISuggestionId,
   onReconnectSource,
-  onAISuggestionSelect,
+  onAISuggestionActivate,
 }: VideoWorkspaceProps) {
   return (
     <section className="video-workspace" aria-label="Видеоплеер">
@@ -54,9 +57,10 @@ export function VideoWorkspace({
       <MediaPreview
         item={activeItem}
         aiSuggestions={aiSuggestions}
-        selectedAISuggestionId={selectedAISuggestionId}
+        selectedAISuggestionIds={selectedAISuggestionIds}
+        activeAISuggestionId={activeAISuggestionId}
         onReconnectSource={onReconnectSource}
-        onAISuggestionSelect={onAISuggestionSelect}
+        onAISuggestionActivate={onAISuggestionActivate}
       />
       <p className="workspace-file">
         Активный подэтап: {selectedSubstage.title}
@@ -72,15 +76,17 @@ export function VideoWorkspace({
 function MediaPreview({
   item,
   aiSuggestions,
-  selectedAISuggestionId,
+  selectedAISuggestionIds,
+  activeAISuggestionId,
   onReconnectSource,
-  onAISuggestionSelect,
+  onAISuggestionActivate,
 }: {
   item: MediaItem | null
   aiSuggestions: AISuggestion[]
-  selectedAISuggestionId: string | null
+  selectedAISuggestionIds: string[]
+  activeAISuggestionId: string | null
   onReconnectSource: () => void
-  onAISuggestionSelect: (suggestionId: string) => void
+  onAISuggestionActivate: (suggestionId: string) => void
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const animationFrameRef = useRef<number | null>(null)
@@ -205,9 +211,10 @@ function MediaPreview({
             currentTime={currentTime}
             duration={videoDuration || item.metadata?.duration || 0}
             aiSuggestions={aiSuggestions}
-            selectedAISuggestionId={selectedAISuggestionId}
+            selectedAISuggestionIds={selectedAISuggestionIds}
+            activeAISuggestionId={activeAISuggestionId}
             onSeek={seekVideo}
-            onAISuggestionSelect={onAISuggestionSelect}
+            onAISuggestionActivate={onAISuggestionActivate}
           />
         ) : null}
         <VideoFilmstrip

@@ -1,10 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
+import type { KeyboardEvent } from 'react'
 import type {
   AISuggestion,
   EditingStage,
   EditingSubstage,
   VersionRecord,
 } from '../../types'
+import {
+  getAISuggestionTitle,
+  getAcceptedSuggestionDuration,
+} from '../../utils/aiSuggestions'
 import { formatDuration } from '../../utils/mediaFormat'
 import { getPreviousVersion, statusLabels } from '../../utils/projectState'
 
@@ -12,7 +17,8 @@ type ReviewPanelProps = {
   stage: EditingStage
   substage: EditingSubstage
   aiSuggestions: AISuggestion[]
-  selectedAISuggestionId: string | null
+  selectedAISuggestionIds: string[]
+  activeAISuggestionId: string | null
   onAccept: () => void
   onCommentChange: (comment: string) => void
   onCreateReview: () => void
@@ -23,16 +29,22 @@ type ReviewPanelProps = {
   onDuplicateVersion: (versionId: string) => void
   onDeleteVersion: (versionId: string) => void
   onKeepOnlyVersion: (versionId: string) => void
-  onAISuggestionSelect: (suggestionId: string) => void
+  onAISuggestionActivate: (suggestionId: string) => void
+  onAISuggestionSelectionToggle: (suggestionId: string) => void
+  onAISuggestionsSelect: (suggestionIds: string[]) => void
   onAISuggestionAccept: (suggestionId: string) => void
   onAISuggestionReject: (suggestionId: string) => void
+  onAISuggestionsAccept: (suggestionIds: string[]) => void
+  onAISuggestionsReject: (suggestionIds: string[]) => void
 }
 
+// Owns review controls, version history actions, and AI suggestion approval workflow UI.
 export function ReviewPanel({
   stage,
   substage,
   aiSuggestions,
-  selectedAISuggestionId,
+  selectedAISuggestionIds,
+  activeAISuggestionId,
   onAccept,
   onCommentChange,
   onCreateReview,
@@ -43,9 +55,13 @@ export function ReviewPanel({
   onDuplicateVersion,
   onDeleteVersion,
   onKeepOnlyVersion,
-  onAISuggestionSelect,
+  onAISuggestionActivate,
+  onAISuggestionSelectionToggle,
+  onAISuggestionsSelect,
   onAISuggestionAccept,
   onAISuggestionReject,
+  onAISuggestionsAccept,
+  onAISuggestionsReject,
 }: ReviewPanelProps) {
   const isBlocked = substage.status === 'blocked'
   const previousVersion = getPreviousVersion(substage)
@@ -106,10 +122,15 @@ export function ReviewPanel({
 
         <AISuggestionsPanel
           suggestions={aiSuggestions}
-          selectedSuggestionId={selectedAISuggestionId}
-          onSelect={onAISuggestionSelect}
+          selectedSuggestionIds={selectedAISuggestionIds}
+          activeSuggestionId={activeAISuggestionId}
+          onActivate={onAISuggestionActivate}
+          onToggleSelection={onAISuggestionSelectionToggle}
+          onSelectSuggestions={onAISuggestionsSelect}
           onAccept={onAISuggestionAccept}
           onReject={onAISuggestionReject}
+          onAcceptSelected={onAISuggestionsAccept}
+          onRejectSelected={onAISuggestionsReject}
         />
 
         <div className="history-head">
@@ -155,35 +176,177 @@ export function ReviewPanel({
 
 function AISuggestionsPanel({
   suggestions,
-  selectedSuggestionId,
-  onSelect,
+  selectedSuggestionIds,
+  activeSuggestionId,
+  onActivate,
+  onToggleSelection,
+  onSelectSuggestions,
   onAccept,
   onReject,
+  onAcceptSelected,
+  onRejectSelected,
 }: {
   suggestions: AISuggestion[]
-  selectedSuggestionId: string | null
-  onSelect: (suggestionId: string) => void
+  selectedSuggestionIds: string[]
+  activeSuggestionId: string | null
+  onActivate: (suggestionId: string) => void
+  onToggleSelection: (suggestionId: string) => void
+  onSelectSuggestions: (suggestionIds: string[]) => void
   onAccept: (suggestionId: string) => void
   onReject: (suggestionId: string) => void
+  onAcceptSelected: (suggestionIds: string[]) => void
+  onRejectSelected: (suggestionIds: string[]) => void
 }) {
+  const [statusFilter, setStatusFilter] = useState<AISuggestion['status'] | 'all'>('all')
+  const filteredSuggestions = statusFilter === 'all'
+    ? suggestions
+    : suggestions.filter((suggestion) => suggestion.status === statusFilter)
+  const selectedCount = selectedSuggestionIds.length
+  const counts = getAISuggestionCounts(suggestions)
+  const estimatedRemovedTime = getAcceptedSuggestionDuration(suggestions)
+  const filterTabs: Array<{
+    id: AISuggestion['status'] | 'all'
+    label: string
+    count: number
+  }> = [
+    { id: 'all', label: 'All', count: suggestions.length },
+    { id: 'pending', label: 'Pending', count: counts.pending },
+    { id: 'accepted', label: 'Accepted', count: counts.accepted },
+    { id: 'rejected', label: 'Rejected', count: counts.rejected },
+  ]
+
+  const activateAdjacentSuggestion = (direction: 1 | -1) => {
+    if (!filteredSuggestions.length) {
+      return
+    }
+
+    const activeIndex = filteredSuggestions.findIndex(
+      (suggestion) => suggestion.id === activeSuggestionId,
+    )
+    const nextIndex = activeIndex === -1
+      ? 0
+      : (activeIndex + direction + filteredSuggestions.length) % filteredSuggestions.length
+
+    onActivate(filteredSuggestions[nextIndex].id)
+  }
+
+  const handleKeyDown = (event: KeyboardEvent<HTMLElement>) => {
+    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') {
+      return
+    }
+
+    event.preventDefault()
+    activateAdjacentSuggestion(event.key === 'ArrowDown' ? 1 : -1)
+  }
+
   return (
-    <section className="ai-suggestions-panel" aria-label="AI Suggestions">
+    <section
+      className="ai-suggestions-panel"
+      aria-label="AI Suggestions"
+      onKeyDown={handleKeyDown}
+    >
       <div className="scene-summary-head">
         <p className="section-label">AI Suggestions</p>
         <strong>{suggestions.length}</strong>
       </div>
+      <div className="ai-suggestion-tabs" role="tablist" aria-label="Filter AI Suggestions">
+        {filterTabs.map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            role="tab"
+            className="ai-suggestion-tab"
+            data-active={statusFilter === tab.id}
+            aria-selected={statusFilter === tab.id}
+            onClick={() => setStatusFilter(tab.id)}
+          >
+            {tab.label} <span>{tab.count}</span>
+          </button>
+        ))}
+      </div>
+      <dl className="ai-suggestion-summary">
+        <div>
+          <dt>Total Suggestions</dt>
+          <dd>{suggestions.length}</dd>
+        </div>
+        <div>
+          <dt>Pending</dt>
+          <dd>{counts.pending}</dd>
+        </div>
+        <div>
+          <dt>Accepted</dt>
+          <dd>{counts.accepted}</dd>
+        </div>
+        <div>
+          <dt>Rejected</dt>
+          <dd>{counts.rejected}</dd>
+        </div>
+        <div>
+          <dt>Estimated Removed Time</dt>
+          <dd>{formatDuration(estimatedRemovedTime)}</dd>
+        </div>
+      </dl>
+      <div className="ai-suggestion-legend" aria-label="AI suggestion status legend">
+        <span><span className="ai-legend-swatch ai-legend-pending" />Pending</span>
+        <span><span className="ai-legend-swatch ai-legend-accepted" />Accepted</span>
+        <span><span className="ai-legend-swatch ai-legend-rejected" />Rejected</span>
+      </div>
+      <div className="ai-selection-toolbar">
+        <button
+          type="button"
+          className="ghost-button"
+          onClick={() => onSelectSuggestions(filteredSuggestions.map((suggestion) => suggestion.id))}
+        >
+          Select All
+        </button>
+        <button
+          type="button"
+          className="ghost-button"
+          disabled={!selectedCount}
+          onClick={() => onSelectSuggestions([])}
+        >
+          Clear Selection
+        </button>
+      </div>
+      {selectedCount ? (
+        <div className="ai-batch-actions" aria-label="Batch AI suggestion actions">
+          <button
+            type="button"
+            className="ghost-button"
+            onClick={() => onAcceptSelected(selectedSuggestionIds)}
+          >
+            Accept Selected
+          </button>
+          <button
+            type="button"
+            className="ghost-button"
+            onClick={() => onRejectSelected(selectedSuggestionIds)}
+          >
+            Reject Selected
+          </button>
+        </div>
+      ) : null}
       <div className="ai-suggestion-list">
-        {suggestions.map((suggestion) => (
+        {filteredSuggestions.map((suggestion) => (
           <article
             key={suggestion.id}
             className="ai-suggestion-card"
-            data-selected={suggestion.id === selectedSuggestionId}
+            data-selected={selectedSuggestionIds.includes(suggestion.id)}
+            data-active={suggestion.id === activeSuggestionId}
             data-status={suggestion.status}
           >
+            <label className="ai-suggestion-checkbox">
+              <input
+                type="checkbox"
+                checked={selectedSuggestionIds.includes(suggestion.id)}
+                onChange={() => onToggleSelection(suggestion.id)}
+              />
+              <span className="visually-hidden">Select {getAISuggestionTitle(suggestion)}</span>
+            </label>
             <button
               type="button"
               className="ai-suggestion-main"
-              onClick={() => onSelect(suggestion.id)}
+              onClick={() => onActivate(suggestion.id)}
             >
               <span>
                 <strong>{getAISuggestionTitle(suggestion)}</strong>
@@ -208,7 +371,10 @@ function AISuggestionsPanel({
                 type="button"
                 className="ghost-button"
                 disabled={suggestion.status !== 'pending'}
-                onClick={() => onAccept(suggestion.id)}
+                onClick={() => {
+                  onAccept(suggestion.id)
+                  onActivate(suggestion.id)
+                }}
               >
                 Accept
               </button>
@@ -216,7 +382,10 @@ function AISuggestionsPanel({
                 type="button"
                 className="ghost-button"
                 disabled={suggestion.status !== 'pending'}
-                onClick={() => onReject(suggestion.id)}
+                onClick={() => {
+                  onReject(suggestion.id)
+                  onActivate(suggestion.id)
+                }}
               >
                 Reject
               </button>
@@ -228,14 +397,18 @@ function AISuggestionsPanel({
   )
 }
 
-function getAISuggestionTitle(suggestion: AISuggestion) {
-  const labels: Record<AISuggestion['type'], string> = {
-    cut: 'Cut',
-    trim: 'Trim',
-    silence: 'Silence',
-  }
-
-  return labels[suggestion.type]
+function getAISuggestionCounts(suggestions: AISuggestion[]) {
+  return suggestions.reduce(
+    (counts, suggestion) => ({
+      ...counts,
+      [suggestion.status]: counts[suggestion.status] + 1,
+    }),
+    {
+      pending: 0,
+      accepted: 0,
+      rejected: 0,
+    },
+  )
 }
 
 function VersionItem({

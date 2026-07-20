@@ -36,6 +36,7 @@ import {
 
 const projectStorageKey = 'ai-video-director-project-state-v2'
 
+// Coordinates application-wide project, media, review, and AI suggestion state.
 function App() {
   const { themePreference, setThemePreference } = useTheme()
   const [projectState, setProjectState] = useLocalStorageState(
@@ -48,7 +49,10 @@ function App() {
   const [openHelpId, setOpenHelpId] = useState<string | null>(null)
   const [isBackendConnected, setIsBackendConnected] = useState(false)
   const [aiSuggestions, setAISuggestions] = useState<AISuggestion[]>(mockAISuggestions)
-  const [selectedAISuggestionId, setSelectedAISuggestionId] = useState<string | null>(
+  const [selectedAISuggestionIds, setSelectedAISuggestionIds] = useState<string[]>(
+    mockAISuggestions[0] ? [mockAISuggestions[0].id] : [],
+  )
+  const [activeAISuggestionId, setActiveAISuggestionId] = useState<string | null>(
     mockAISuggestions[0]?.id ?? null,
   )
   const [outputSettings, setOutputSettings] = useState<ProjectOutputSettings>(
@@ -125,18 +129,41 @@ function App() {
 	    document.getElementById('media-upload')?.click()
 	  }
 
-  const updateAISuggestionStatus = (
-    suggestionId: string,
+  const activateAISuggestion = (suggestionId: string) => {
+    setActiveAISuggestionId(suggestionId)
+    setSelectedAISuggestionIds((currentIds) =>
+      currentIds.includes(suggestionId) ? currentIds : [...currentIds, suggestionId],
+    )
+  }
+
+  const toggleAISuggestionSelection = (suggestionId: string) => {
+    setActiveAISuggestionId(suggestionId)
+    setSelectedAISuggestionIds((currentIds) =>
+      currentIds.includes(suggestionId)
+        ? currentIds.filter((id) => id !== suggestionId)
+        : [...currentIds, suggestionId],
+    )
+  }
+
+  const selectAISuggestions = (suggestionIds: string[]) => {
+    setSelectedAISuggestionIds(suggestionIds)
+    setActiveAISuggestionId(suggestionIds[0] ?? null)
+  }
+
+  const updateAISuggestionStatuses = (
+    suggestionIds: string[],
     status: AISuggestion['status'],
   ) => {
+    const suggestionIdSet = new Set(suggestionIds)
+
     setAISuggestions((currentSuggestions) =>
       currentSuggestions.map((suggestion) =>
-        suggestion.id === suggestionId
+        suggestionIdSet.has(suggestion.id)
           ? { ...suggestion, status }
           : suggestion,
       ),
     )
-    setSelectedAISuggestionId(suggestionId)
+    setActiveAISuggestionId(suggestionIds[0] ?? null)
   }
 
   return (
@@ -188,15 +215,17 @@ function App() {
 	          outputSettings={outputSettings}
 	          selectedSubstage={selectedSubstage}
             aiSuggestions={aiSuggestions}
-            selectedAISuggestionId={selectedAISuggestionId}
+            selectedAISuggestionIds={selectedAISuggestionIds}
+            activeAISuggestionId={activeAISuggestionId}
 	          onReconnectSource={handleReconnectMediaSource}
-            onAISuggestionSelect={setSelectedAISuggestionId}
+            onAISuggestionActivate={activateAISuggestion}
 	        />
         <ReviewPanel
           stage={selectedStage}
           substage={selectedSubstage}
           aiSuggestions={aiSuggestions}
-          selectedAISuggestionId={selectedAISuggestionId}
+          selectedAISuggestionIds={selectedAISuggestionIds}
+          activeAISuggestionId={activeAISuggestionId}
           onAccept={() =>
             setProjectState((currentState) =>
               setSelectedSubstageStatus(
@@ -253,12 +282,20 @@ function App() {
               keepOnlySelectedSubstageVersion(currentState, versionId),
             )
           }
-          onAISuggestionSelect={setSelectedAISuggestionId}
+          onAISuggestionActivate={activateAISuggestion}
+          onAISuggestionSelectionToggle={toggleAISuggestionSelection}
+          onAISuggestionsSelect={selectAISuggestions}
           onAISuggestionAccept={(suggestionId) =>
-            updateAISuggestionStatus(suggestionId, 'accepted')
+            updateAISuggestionStatuses([suggestionId], 'accepted')
           }
           onAISuggestionReject={(suggestionId) =>
-            updateAISuggestionStatus(suggestionId, 'rejected')
+            updateAISuggestionStatuses([suggestionId], 'rejected')
+          }
+          onAISuggestionsAccept={(suggestionIds) =>
+            updateAISuggestionStatuses(suggestionIds, 'accepted')
+          }
+          onAISuggestionsReject={(suggestionIds) =>
+            updateAISuggestionStatuses(suggestionIds, 'rejected')
           }
         />
       </main>

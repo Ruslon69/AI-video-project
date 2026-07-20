@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent } from 'react'
 import type {
   AISuggestion,
@@ -7,20 +7,27 @@ import type {
   VideoScene,
   VideoTranscriptSegment,
 } from '../../types'
+import { getAISuggestionTitle } from '../../utils/aiSuggestions'
 import { formatDuration } from '../../utils/mediaFormat'
 import type {
   TimelineItem as TimelineItemModel,
   TimelineTrack as TimelineTrackModel,
 } from './timelineTypes'
+import {
+  BASE_PIXELS_PER_SECOND,
+  KEYBOARD_SEEK_SECONDS,
+  TIMELINE_ZOOM_OPTIONS,
+} from './timelineConstants'
 
 type VideoTimelineProps = {
   item: MediaItem
   currentTime: number
   duration: number
   aiSuggestions: AISuggestion[]
-  selectedAISuggestionId: string | null
+  selectedAISuggestionIds: string[]
+  activeAISuggestionId: string | null
   onSeek: (timestamp: number) => void
-  onAISuggestionSelect: (suggestionId: string) => void
+  onAISuggestionActivate: (suggestionId: string) => void
 }
 
 type TimelineHeaderProps = {
@@ -44,6 +51,8 @@ type TimelineTrackProps = {
   track: TimelineTrackModel
   pixelsPerSecond: number
   selectedItemId: string | null
+  selectedAISuggestionIds: string[]
+  activeAISuggestionId: string | null
   onItemSelect: (item: TimelineItemModel) => void
 }
 
@@ -54,20 +63,18 @@ type TimelineTick = {
   isMajor: boolean
 }
 
-const KEYBOARD_SEEK_SECONDS = 5
-const TIMELINE_ZOOM_OPTIONS = [50, 100, 150, 200] as const
-const BASE_PIXELS_PER_SECOND = 8
-
 type TimelineZoom = (typeof TIMELINE_ZOOM_OPTIONS)[number]
 
+// Renders timeline tracks, playhead/ruler controls, and maps media analysis into timeline blocks.
 export function VideoTimeline({
   item,
   currentTime,
   duration,
   aiSuggestions,
-  selectedAISuggestionId,
+  selectedAISuggestionIds,
+  activeAISuggestionId,
   onSeek,
-  onAISuggestionSelect,
+  onAISuggestionActivate,
 }: VideoTimelineProps) {
   const [zoom, setZoom] = useState<TimelineZoom>(100)
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null)
@@ -99,6 +106,20 @@ export function VideoTimeline({
     pendingPlayheadOffsetRef.current = null
   }, [clampedCurrentTime, pixelsPerSecond, zoom])
 
+  useEffect(() => {
+    if (!activeAISuggestionId) {
+      return
+    }
+
+    const activeSuggestion = aiSuggestions.find(
+      (suggestion) => suggestion.id === activeAISuggestionId,
+    )
+
+    if (activeSuggestion) {
+      onSeek(clampTime(activeSuggestion.start, safeDuration))
+    }
+  }, [activeAISuggestionId, aiSuggestions, onSeek, safeDuration])
+
   const handleSeekFromClientX = (clientX: number, element: HTMLElement) => {
     const rect = element.getBoundingClientRect()
     const timestamp = rect.width > 0
@@ -120,7 +141,7 @@ export function VideoTimeline({
   const handleItemSelect = (timelineItem: TimelineItemModel) => {
     setSelectedItemId(timelineItem.id)
     if (timelineItem.aiSuggestion) {
-      onAISuggestionSelect(timelineItem.aiSuggestion.id)
+      onAISuggestionActivate(timelineItem.aiSuggestion.id)
     }
     onSeek(clampTime(timelineItem.start, safeDuration))
   }
@@ -181,11 +202,9 @@ export function VideoTimeline({
                   key={track.id}
                   track={track}
                   pixelsPerSecond={pixelsPerSecond}
-                  selectedItemId={
-                    track.id === 'ai-suggestions' && selectedAISuggestionId
-                      ? `ai-suggestion-${selectedAISuggestionId}`
-                      : selectedItemId
-                  }
+                  selectedItemId={selectedItemId}
+                  selectedAISuggestionIds={selectedAISuggestionIds}
+                  activeAISuggestionId={activeAISuggestionId}
                   onItemSelect={handleItemSelect}
                 />
               ))}
@@ -263,6 +282,8 @@ function TimelineTrack({
   track,
   pixelsPerSecond,
   selectedItemId,
+  selectedAISuggestionIds,
+  activeAISuggestionId,
   onItemSelect,
 }: TimelineTrackProps) {
   return (
@@ -282,7 +303,12 @@ function TimelineTrack({
               data-track-id={item.trackId}
               data-item-id={item.id}
               data-ai-status={item.aiSuggestion?.status}
-              data-selected={selectedItemId === item.id}
+              data-selected={
+                item.aiSuggestion
+                  ? selectedAISuggestionIds.includes(item.aiSuggestion.id)
+                  : selectedItemId === item.id
+              }
+              data-active={item.aiSuggestion?.id === activeAISuggestionId}
               style={getTimelineItemStyle(item, pixelsPerSecond)}
               title={getTimelineItemTitle(item)}
               onClick={(event) => {
@@ -482,16 +508,6 @@ function getTimelineItemTitle(item: TimelineItemModel) {
     suggestion.reason,
     `Confidence ${Math.round(suggestion.confidence * 100)}%`,
   ].join('\n')
-}
-
-function getAISuggestionTitle(suggestion: AISuggestion) {
-  const labels: Record<AISuggestion['type'], string> = {
-    cut: 'Cut',
-    trim: 'Trim',
-    silence: 'Silence',
-  }
-
-  return labels[suggestion.type]
 }
 
 function getPixelsPerSecond(zoom: TimelineZoom) {

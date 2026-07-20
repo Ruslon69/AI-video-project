@@ -1,17 +1,19 @@
 # Architecture
 
-AI Video Director is a local-first editor foundation with a React/TypeScript frontend and a FastAPI/Python backend. Current processing is request-based and uses FFmpeg/ffprobe for local media inspection.
+AI Video Director is a local-first editor foundation with a React/TypeScript frontend and a FastAPI/Python backend. Current media processing is request-based and uses FFmpeg/ffprobe for local media inspection.
 
-## Current Architecture
+## System Overview
 
 ```text
-User
+React editor shell
+  |
+  +--> Project workflow state
+  +--> Media library state
+  +--> AI suggestion state
+  +--> Timeline rendering
   |
   v
-React UI components
-  |
-  v
-React hooks and frontend API services
+Frontend API client
   |
   v
 FastAPI routes
@@ -20,26 +22,26 @@ FastAPI routes
 Backend media services
   |
   v
-Temporary files + ffprobe/FFmpeg subprocesses
+Temporary files + FFmpeg/ffprobe subprocesses
 ```
 
 ## Frontend Responsibilities
 
-- Render the editor shell, media library, workspace, review panel, assistant panel, and help UI.
-- Store local media item state in hooks.
-- Coordinate metadata, preview, and scene requests.
-- Use `AbortController` for cancellable requests.
-- Prevent duplicate queued or active media-processing requests.
-- Ignore stale responses after removal, cancellation, or unmount.
-- Revoke object URLs when items are removed or the library is disposed.
+- Render the three-column editor layout.
+- Manage project stages, substages, versions, and review comments.
+- Manage local media library state and object URLs.
+- Coordinate backend requests for metadata, previews, scenes, and transcription.
+- Render the video player, filmstrip, timeline ruler, zoom controls, scene track, transcript track, and AI Suggestions track.
+- Store AI suggestions separately from scenes, transcript data, and timeline tracks.
+- Provide non-destructive AI suggestion review controls.
 
 ## Backend Responsibilities
 
-- Expose local HTTP endpoints for media-processing requests.
+- Expose local HTTP endpoints for media analysis.
 - Validate uploaded media before processing.
 - Run ffprobe and FFmpeg with bounded subprocess calls.
 - Return typed response models.
-- Convert domain-specific processing errors into sanitized API errors.
+- Convert known processing errors into controlled API errors.
 - Clean temporary files and close uploads after each request.
 
 ## API Layer
@@ -49,27 +51,27 @@ Current video endpoints live under `/video`:
 - `POST /video/metadata`
 - `POST /video/previews`
 - `POST /video/scenes`
+- `POST /video/transcription`
 
-Routes should stay thin. They receive uploads, call a service, and map known service errors into controlled HTTP responses.
+Routes should stay thin. They receive uploads, call media services, and map known service errors into controlled HTTP responses.
 
-## Services
+## State Boundaries
 
-Backend services own domain and infrastructure logic:
+### Project State
 
-- Upload validation and limited reads.
-- ffprobe metadata extraction.
-- FFmpeg preview frame generation.
-- FFmpeg scene detection.
-- Timestamp calculation and parsing.
-- Temporary directory cleanup.
+Project state owns stages, substages, version history, selected stage/substage, and review comments.
 
-## Media Processing
+### Media State
 
-Current media processing is local and request-scoped. Uploaded content is read within configured limits, written to server-generated temporary paths, validated, processed, returned to the frontend, and cleaned up.
+Media state owns imported files, object URLs, upload/processing progress, metadata, preview frames, scene results, and transcription results.
 
-## FFmpeg Integration
+### AI Suggestion State
 
-ffprobe validates actual video streams, duration, dimensions, codec, FPS, bitrate, and file size where needed. FFmpeg generates preview frames and detects scene changes. Subprocess calls use argument arrays, `shell=False`, configured timeouts, and sanitized failure handling.
+AI suggestion state owns `AISuggestion[]`, selected suggestion ids, active suggestion id, and status changes. Accept and reject operations only update status.
+
+### Timeline Rendering
+
+Timeline rendering receives domain data and maps it into generic `TimelineTrack` and `TimelineItem` models. The timeline does not own suggestion generation, project decisions, or edit application.
 
 ## Current Data Flow
 
@@ -86,58 +88,24 @@ Request metadata
 Queue preview generation
   |
   v
-Queue scene detection after previews
+Queue scene detection and transcription
   |
   v
-Render metadata, preview filmstrip, scene count, and scene timestamps
+Render player, filmstrip, analysis panels, and timeline tracks
+  |
+  v
+Review AI suggestions without modifying source media
 ```
 
-## Planned Architecture
+## Future Edit Engine Boundary
 
-```text
-Current media foundations
-  |
-  v
-Whisper transcription
-  |
-  v
-Scene + speech analysis
-  |
-  v
-Timeline segment generation
-  |
-  v
-AI editing decisions
-  |
-  v
-Effects planning
-  |
-  v
-Export pipeline
-```
-
-## Future Whisper Integration
-
-Whisper should be added as a separate pipeline stage with explicit input, output, cancellation behavior, progress state, and failure state. It should not be embedded directly in UI components.
-
-## Future AI Analysis
-
-AI analysis should combine scene data, transcript data, media metadata, and project output settings into reviewable analysis outputs. The user should be able to inspect and reject AI outputs.
-
-## Timeline Generation
-
-Timeline generation should convert scene-change timestamps, transcript ranges, and future AI analysis into explicit timeline segments. Scene timestamps are not yet full segments.
-
-## Export Pipeline
-
-Export should be introduced as its own backend service boundary. It should use explicit timeline input and return controlled errors without exposing commands, paths, or raw subprocess output.
+`applyAcceptedSuggestions()` is reserved for a future non-destructive edit engine. It should consume accepted suggestions and create an explicit edit plan. It should not mutate source media or timeline render state directly.
 
 ## Architectural Principles
 
-- Separation of concerns between UI, hooks, services, routes, schemas, and backend media services.
-- Thin routes with domain logic in services.
-- Typed APIs at backend and frontend boundaries.
-- Local-first processing unless a sprint explicitly changes direction.
-- Explicit cleanup for object URLs, uploads, temporary files, and request controllers.
-- Bounded concurrency for expensive media operations.
-- Observable processing with visible loading, ready, empty, and error states.
+- Keep source media immutable until an explicit export pipeline is introduced.
+- Keep domain state separate from timeline rendering.
+- Keep backend routes thin and service-owned.
+- Use typed frontend and backend boundaries.
+- Keep expensive media operations cancellable and bounded.
+- Make automated decisions visible, selectable, and reversible.

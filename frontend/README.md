@@ -1,32 +1,36 @@
-# React + TypeScript + Vite
+# AI Video Director Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+React/Vite frontend for the local AI Video Director editor.
 
-Currently, two official plugins are available:
+## Responsibilities
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- Render the three-column editor workspace.
+- Manage project, media, and AI suggestion review state.
+- Display video preview, filmstrip, timeline tracks, and analysis summaries.
+- Call the local FastAPI backend for metadata, previews, scene detection, and transcription.
+- Keep AI suggestion review non-destructive.
 
-## React Compiler
+## Commands
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```bash
+npm install
+npm run dev
+npm run lint
+npm run build
+npm run preview
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+## Source Layout
+
+```text
+src/
+├── components/   # Editor UI grouped by feature area
+├── data/         # Static data and mock AI suggestions
+├── hooks/        # Reusable React state hooks
+├── services/     # API client
+├── utils/        # Shared helpers
+├── App.tsx       # Top-level app state coordination
+├── App.css       # Application styles
+├── index.css     # Global tokens and base styles
+└── types.ts      # Shared frontend domain types
+```

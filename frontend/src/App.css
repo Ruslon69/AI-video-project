@@ -1084,12 +1084,16 @@ textarea:focus-visible {
 }
 
 .video-timeline {
+  --timeline-ruler-height: 28px;
+  --timeline-track-height: 46px;
   display: grid;
   gap: 8px;
   padding: 12px;
   border-top: 1px solid var(--border);
   background: var(--panel-strong);
 }
+
+/* Timeline layout */
 
 .video-timeline-head {
   display: flex;
@@ -1148,7 +1152,7 @@ textarea:focus-visible {
 
 .timeline-label-column {
   display: grid;
-  grid-template-rows: 28px repeat(4, 46px);
+  grid-template-rows: var(--timeline-ruler-height) repeat(4, var(--timeline-track-height));
   gap: 6px;
 }
 
@@ -1197,7 +1201,7 @@ textarea:focus-visible {
 
 .timeline-ruler {
   position: relative;
-  height: 28px;
+  height: var(--timeline-ruler-height);
   overflow: visible;
   border-bottom: 1px solid var(--border);
 }
@@ -1242,7 +1246,7 @@ textarea:focus-visible {
 
 .timeline-track-lane {
   position: relative;
-  height: 46px;
+  height: var(--timeline-track-height);
   box-sizing: border-box;
   overflow: hidden;
   border: 1px solid var(--border);
@@ -1295,6 +1299,13 @@ textarea:focus-visible {
 
 .timeline-item[data-selected='true'] {
   box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.timeline-item[data-active='true'] {
+  border-color: var(--focus);
+  box-shadow:
+    inset 0 0 0 2px var(--focus),
+    0 0 0 2px rgba(50, 103, 200, 0.18);
 }
 
 .timeline-empty-item {
@@ -1393,6 +1404,8 @@ textarea:focus-visible {
   content: '';
   transform: translate(-50%, -45%);
 }
+
+/* Media preview and analysis */
 
 .image-player {
   width: 100%;
@@ -1547,6 +1560,8 @@ textarea:focus-visible {
   font-weight: 750;
 }
 
+/* AI suggestion review */
+
 .ai-suggestions-panel {
   display: grid;
   gap: 10px;
@@ -1556,13 +1571,112 @@ textarea:focus-visible {
   background: var(--panel-strong);
 }
 
+.ai-suggestion-tabs,
+.ai-selection-toolbar,
+.ai-batch-actions,
+.ai-suggestion-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ai-suggestion-tab {
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 0 9px;
+  color: var(--text-muted);
+  background: var(--surface-soft);
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.ai-suggestion-tab[data-active='true'] {
+  border-color: var(--accent);
+  color: var(--text-strong);
+  background: var(--selected);
+}
+
+.ai-suggestion-tab span {
+  color: var(--text-subtle);
+}
+
+.ai-suggestion-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  margin: 0;
+}
+
+.ai-suggestion-summary div {
+  display: grid;
+  min-height: 54px;
+  align-content: center;
+  gap: 3px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 7px;
+  background: var(--surface-soft);
+}
+
+.ai-suggestion-summary dt {
+  color: var(--text-subtle);
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.ai-suggestion-summary dd {
+  margin: 0;
+  color: var(--text-strong);
+  font-size: 13px;
+  font-weight: 850;
+}
+
+.ai-suggestion-legend {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.ai-suggestion-legend > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.ai-legend-swatch {
+  width: 12px;
+  height: 12px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+}
+
+.ai-legend-pending {
+  background: rgba(230, 182, 74, 0.72);
+}
+
+.ai-legend-accepted {
+  background: rgba(47, 180, 124, 0.72);
+}
+
+.ai-legend-rejected {
+  background: rgba(216, 83, 83, 0.72);
+}
+
 .ai-suggestion-list {
   display: grid;
   gap: 8px;
 }
 
 .ai-suggestion-card {
+  position: relative;
   display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
   gap: 9px;
   border: 1px solid var(--border);
   border-radius: 7px;
@@ -1573,6 +1687,26 @@ textarea:focus-visible {
 .ai-suggestion-card[data-selected='true'] {
   border-color: var(--accent);
   box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.ai-suggestion-card[data-active='true'] {
+  border-color: var(--focus);
+  box-shadow:
+    inset 0 0 0 2px var(--focus),
+    0 0 0 2px rgba(50, 103, 200, 0.14);
+}
+
+.ai-suggestion-checkbox {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 2px;
+}
+
+.ai-suggestion-checkbox input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
 }
 
 .ai-suggestion-main {
@@ -1630,6 +1764,7 @@ textarea:focus-visible {
 
 .ai-suggestion-meta {
   display: grid;
+  grid-column: 2;
   grid-template-columns: 1fr 92px;
   gap: 8px;
   margin: 0;
@@ -1655,6 +1790,7 @@ textarea:focus-visible {
 
 .ai-suggestion-actions {
   display: flex;
+  grid-column: 2;
   gap: 6px;
 }
 
