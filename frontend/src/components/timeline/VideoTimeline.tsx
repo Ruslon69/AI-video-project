@@ -1,6 +1,7 @@
 import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent } from 'react'
 import type {
+  AISuggestion,
   MediaItem,
   VideoPreviewFrame,
   VideoScene,
@@ -16,7 +17,10 @@ type VideoTimelineProps = {
   item: MediaItem
   currentTime: number
   duration: number
+  aiSuggestions: AISuggestion[]
+  selectedAISuggestionId: string | null
   onSeek: (timestamp: number) => void
+  onAISuggestionSelect: (suggestionId: string) => void
 }
 
 type TimelineHeaderProps = {
@@ -60,7 +64,10 @@ export function VideoTimeline({
   item,
   currentTime,
   duration,
+  aiSuggestions,
+  selectedAISuggestionId,
   onSeek,
+  onAISuggestionSelect,
 }: VideoTimelineProps) {
   const [zoom, setZoom] = useState<TimelineZoom>(100)
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null)
@@ -75,8 +82,8 @@ export function VideoTimeline({
     [safeDuration, pixelsPerSecond],
   )
   const tracks = useMemo(
-    () => buildTimelineTracks(item, safeDuration),
-    [item, safeDuration],
+    () => buildTimelineTracks(item, safeDuration, aiSuggestions),
+    [item, safeDuration, aiSuggestions],
   )
 
   useLayoutEffect(() => {
@@ -112,6 +119,9 @@ export function VideoTimeline({
 
   const handleItemSelect = (timelineItem: TimelineItemModel) => {
     setSelectedItemId(timelineItem.id)
+    if (timelineItem.aiSuggestion) {
+      onAISuggestionSelect(timelineItem.aiSuggestion.id)
+    }
     onSeek(clampTime(timelineItem.start, safeDuration))
   }
 
@@ -171,7 +181,11 @@ export function VideoTimeline({
                   key={track.id}
                   track={track}
                   pixelsPerSecond={pixelsPerSecond}
-                  selectedItemId={selectedItemId}
+                  selectedItemId={
+                    track.id === 'ai-suggestions' && selectedAISuggestionId
+                      ? `ai-suggestion-${selectedAISuggestionId}`
+                      : selectedItemId
+                  }
                   onItemSelect={handleItemSelect}
                 />
               ))}
@@ -267,9 +281,10 @@ function TimelineTrack({
               className={`timeline-item timeline-item-${item.kind}`}
               data-track-id={item.trackId}
               data-item-id={item.id}
+              data-ai-status={item.aiSuggestion?.status}
               data-selected={selectedItemId === item.id}
               style={getTimelineItemStyle(item, pixelsPerSecond)}
-              title={item.title}
+              title={getTimelineItemTitle(item)}
               onClick={(event) => {
                 event.stopPropagation()
                 onItemSelect(item)
@@ -289,7 +304,11 @@ function TimelineTrack({
   )
 }
 
-function buildTimelineTracks(item: MediaItem, duration: number): TimelineTrackModel[] {
+function buildTimelineTracks(
+  item: MediaItem,
+  duration: number,
+  aiSuggestions: AISuggestion[],
+): TimelineTrackModel[] {
   return [
     {
       id: 'video',
@@ -308,6 +327,12 @@ function buildTimelineTracks(item: MediaItem, duration: number): TimelineTrackMo
       label: 'Transcript',
       items: getTranscriptItems(item.transcription?.segments ?? [], duration),
       emptyLabel: getTranscriptMessage(item),
+    },
+    {
+      id: 'ai-suggestions',
+      label: 'AI Suggestions',
+      items: getAISuggestionItems(aiSuggestions, duration),
+      emptyLabel: 'No AI suggestions',
     },
   ]
 }
@@ -374,6 +399,26 @@ function getTranscriptItems(
   })
 }
 
+function getAISuggestionItems(
+  suggestions: AISuggestion[],
+  duration: number,
+): TimelineItemModel[] {
+  return suggestions.map((suggestion) => {
+    const start = clampTime(suggestion.start, duration)
+    const end = clampTime(suggestion.end, duration)
+
+    return {
+      id: `ai-suggestion-${suggestion.id}`,
+      trackId: 'ai-suggestions',
+      kind: 'ai-suggestion',
+      start,
+      end: Math.max(end, start + 0.1),
+      label: getAISuggestionTitle(suggestion),
+      aiSuggestion: suggestion,
+    }
+  })
+}
+
 function getSceneAnalysisMessage(item: MediaItem) {
   if (item.scenes?.outcome === 'no_scene_changes') {
     return 'No scene changes detected'
@@ -422,6 +467,31 @@ function getTimelineItemStyle(
     left: `${left}px`,
     width: `${Math.max((item.end - item.start) * pixelsPerSecond, 4)}px`,
   }
+}
+
+function getTimelineItemTitle(item: TimelineItemModel) {
+  if (!item.aiSuggestion) {
+    return item.title
+  }
+
+  const suggestion = item.aiSuggestion
+
+  return [
+    getAISuggestionTitle(suggestion),
+    `${formatDuration(suggestion.start)}-${formatDuration(suggestion.end)}`,
+    suggestion.reason,
+    `Confidence ${Math.round(suggestion.confidence * 100)}%`,
+  ].join('\n')
+}
+
+function getAISuggestionTitle(suggestion: AISuggestion) {
+  const labels: Record<AISuggestion['type'], string> = {
+    cut: 'Cut',
+    trim: 'Trim',
+    silence: 'Silence',
+  }
+
+  return labels[suggestion.type]
 }
 
 function getPixelsPerSecond(zoom: TimelineZoom) {

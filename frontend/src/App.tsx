@@ -6,6 +6,7 @@ import { AppHeader } from './components/layout/AppHeader'
 import { ProjectSidebar } from './components/project/ProjectSidebar'
 import { VideoWorkspace } from './components/project/VideoWorkspace'
 import { ReviewPanel } from './components/review/ReviewPanel'
+import { mockAISuggestions } from './data/aiSuggestions'
 import { initialProjectState } from './data/stages'
 import { helpContent } from './data/helpContent'
 import { useMediaLibrary } from './hooks/useMediaLibrary'
@@ -13,6 +14,7 @@ import { useLocalStorageState } from './hooks/useLocalStorageState'
 import { useTheme } from './hooks/useTheme'
 import { checkBackendHealth } from './services/api'
 import type { ProjectOutputSettings } from './types'
+import type { AISuggestion } from './types'
 import {
   applyPlatformDefaults,
   defaultProjectOutputSettings,
@@ -45,6 +47,10 @@ function App() {
   const [assistantDraftQuestion, setAssistantDraftQuestion] = useState('')
   const [openHelpId, setOpenHelpId] = useState<string | null>(null)
   const [isBackendConnected, setIsBackendConnected] = useState(false)
+  const [aiSuggestions, setAISuggestions] = useState<AISuggestion[]>(mockAISuggestions)
+  const [selectedAISuggestionId, setSelectedAISuggestionId] = useState<string | null>(
+    mockAISuggestions[0]?.id ?? null,
+  )
   const [outputSettings, setOutputSettings] = useState<ProjectOutputSettings>(
     defaultProjectOutputSettings,
   )
@@ -119,6 +125,20 @@ function App() {
 	    document.getElementById('media-upload')?.click()
 	  }
 
+  const updateAISuggestionStatus = (
+    suggestionId: string,
+    status: AISuggestion['status'],
+  ) => {
+    setAISuggestions((currentSuggestions) =>
+      currentSuggestions.map((suggestion) =>
+        suggestion.id === suggestionId
+          ? { ...suggestion, status }
+          : suggestion,
+      ),
+    )
+    setSelectedAISuggestionId(suggestionId)
+  }
+
   return (
     <div className="app-shell">
       <AppHeader
@@ -167,11 +187,16 @@ function App() {
 	          activeItem={activeMediaItem}
 	          outputSettings={outputSettings}
 	          selectedSubstage={selectedSubstage}
+            aiSuggestions={aiSuggestions}
+            selectedAISuggestionId={selectedAISuggestionId}
 	          onReconnectSource={handleReconnectMediaSource}
+            onAISuggestionSelect={setSelectedAISuggestionId}
 	        />
         <ReviewPanel
           stage={selectedStage}
           substage={selectedSubstage}
+          aiSuggestions={aiSuggestions}
+          selectedAISuggestionId={selectedAISuggestionId}
           onAccept={() =>
             setProjectState((currentState) =>
               setSelectedSubstageStatus(
@@ -227,6 +252,13 @@ function App() {
             setProjectState((currentState) =>
               keepOnlySelectedSubstageVersion(currentState, versionId),
             )
+          }
+          onAISuggestionSelect={setSelectedAISuggestionId}
+          onAISuggestionAccept={(suggestionId) =>
+            updateAISuggestionStatus(suggestionId, 'accepted')
+          }
+          onAISuggestionReject={(suggestionId) =>
+            updateAISuggestionStatus(suggestionId, 'rejected')
           }
         />
       </main>

@@ -132,6 +132,16 @@ export type VideoTranscription = {
   segments: VideoTranscriptSegment[]
 }
 
+export type AISuggestion = {
+  id: string
+  type: 'cut' | 'trim' | 'silence'
+  start: number
+  end: number
+  confidence: number
+  reason: string
+  status: 'pending' | 'accepted' | 'rejected'
+}
+
 export type TargetOutputDuration = 30 | 60 | 90 | 120 | 180 | 300 | 600
 
 export type TargetPlatform =

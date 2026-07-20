@@ -1,10 +1,18 @@
 import { useEffect, useRef, useState } from 'react'
-import type { EditingStage, EditingSubstage, VersionRecord } from '../../types'
+import type {
+  AISuggestion,
+  EditingStage,
+  EditingSubstage,
+  VersionRecord,
+} from '../../types'
+import { formatDuration } from '../../utils/mediaFormat'
 import { getPreviousVersion, statusLabels } from '../../utils/projectState'
 
 type ReviewPanelProps = {
   stage: EditingStage
   substage: EditingSubstage
+  aiSuggestions: AISuggestion[]
+  selectedAISuggestionId: string | null
   onAccept: () => void
   onCommentChange: (comment: string) => void
   onCreateReview: () => void
@@ -15,11 +23,16 @@ type ReviewPanelProps = {
   onDuplicateVersion: (versionId: string) => void
   onDeleteVersion: (versionId: string) => void
   onKeepOnlyVersion: (versionId: string) => void
+  onAISuggestionSelect: (suggestionId: string) => void
+  onAISuggestionAccept: (suggestionId: string) => void
+  onAISuggestionReject: (suggestionId: string) => void
 }
 
 export function ReviewPanel({
   stage,
   substage,
+  aiSuggestions,
+  selectedAISuggestionId,
   onAccept,
   onCommentChange,
   onCreateReview,
@@ -30,6 +43,9 @@ export function ReviewPanel({
   onDuplicateVersion,
   onDeleteVersion,
   onKeepOnlyVersion,
+  onAISuggestionSelect,
+  onAISuggestionAccept,
+  onAISuggestionReject,
 }: ReviewPanelProps) {
   const isBlocked = substage.status === 'blocked'
   const previousVersion = getPreviousVersion(substage)
@@ -88,6 +104,14 @@ export function ReviewPanel({
           </button>
         </div>
 
+        <AISuggestionsPanel
+          suggestions={aiSuggestions}
+          selectedSuggestionId={selectedAISuggestionId}
+          onSelect={onAISuggestionSelect}
+          onAccept={onAISuggestionAccept}
+          onReject={onAISuggestionReject}
+        />
+
         <div className="history-head">
           <div>
             <p className="section-label">История версий</p>
@@ -127,6 +151,91 @@ export function ReviewPanel({
       </section>
     </aside>
   )
+}
+
+function AISuggestionsPanel({
+  suggestions,
+  selectedSuggestionId,
+  onSelect,
+  onAccept,
+  onReject,
+}: {
+  suggestions: AISuggestion[]
+  selectedSuggestionId: string | null
+  onSelect: (suggestionId: string) => void
+  onAccept: (suggestionId: string) => void
+  onReject: (suggestionId: string) => void
+}) {
+  return (
+    <section className="ai-suggestions-panel" aria-label="AI Suggestions">
+      <div className="scene-summary-head">
+        <p className="section-label">AI Suggestions</p>
+        <strong>{suggestions.length}</strong>
+      </div>
+      <div className="ai-suggestion-list">
+        {suggestions.map((suggestion) => (
+          <article
+            key={suggestion.id}
+            className="ai-suggestion-card"
+            data-selected={suggestion.id === selectedSuggestionId}
+            data-status={suggestion.status}
+          >
+            <button
+              type="button"
+              className="ai-suggestion-main"
+              onClick={() => onSelect(suggestion.id)}
+            >
+              <span>
+                <strong>{getAISuggestionTitle(suggestion)}</strong>
+                <span>{suggestion.reason}</span>
+              </span>
+              <span className={`ai-suggestion-status ai-suggestion-status-${suggestion.status}`}>
+                {suggestion.status}
+              </span>
+            </button>
+            <dl className="ai-suggestion-meta">
+              <div>
+                <dt>Time</dt>
+                <dd>{formatDuration(suggestion.start)} - {formatDuration(suggestion.end)}</dd>
+              </div>
+              <div>
+                <dt>Confidence</dt>
+                <dd>{Math.round(suggestion.confidence * 100)}%</dd>
+              </div>
+            </dl>
+            <div className="ai-suggestion-actions">
+              <button
+                type="button"
+                className="ghost-button"
+                disabled={suggestion.status !== 'pending'}
+                onClick={() => onAccept(suggestion.id)}
+              >
+                Accept
+              </button>
+              <button
+                type="button"
+                className="ghost-button"
+                disabled={suggestion.status !== 'pending'}
+                onClick={() => onReject(suggestion.id)}
+              >
+                Reject
+              </button>
+            </div>
+          </article>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+function getAISuggestionTitle(suggestion: AISuggestion) {
+  const labels: Record<AISuggestion['type'], string> = {
+    cut: 'Cut',
+    trim: 'Trim',
+    silence: 'Silence',
+  }
+
+  return labels[suggestion.type]
 }
 
 function VersionItem({

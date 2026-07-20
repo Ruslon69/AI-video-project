@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type {
+  AISuggestion,
   EditingSubstage,
   MediaItem,
   ProjectOutputSettings,
@@ -23,14 +24,20 @@ type VideoWorkspaceProps = {
   activeItem: MediaItem | null
   outputSettings: ProjectOutputSettings
   selectedSubstage: EditingSubstage
+  aiSuggestions: AISuggestion[]
+  selectedAISuggestionId: string | null
   onReconnectSource: () => void
+  onAISuggestionSelect: (suggestionId: string) => void
 }
 
 export function VideoWorkspace({
   activeItem,
   outputSettings,
   selectedSubstage,
+  aiSuggestions,
+  selectedAISuggestionId,
   onReconnectSource,
+  onAISuggestionSelect,
 }: VideoWorkspaceProps) {
   return (
     <section className="video-workspace" aria-label="Видеоплеер">
@@ -44,7 +51,13 @@ export function VideoWorkspace({
           {statusLabels[selectedSubstage.status]}
         </span>
       </div>
-      <MediaPreview item={activeItem} onReconnectSource={onReconnectSource} />
+      <MediaPreview
+        item={activeItem}
+        aiSuggestions={aiSuggestions}
+        selectedAISuggestionId={selectedAISuggestionId}
+        onReconnectSource={onReconnectSource}
+        onAISuggestionSelect={onAISuggestionSelect}
+      />
       <p className="workspace-file">
         Активный подэтап: {selectedSubstage.title}
       </p>
@@ -58,10 +71,16 @@ export function VideoWorkspace({
 
 function MediaPreview({
   item,
+  aiSuggestions,
+  selectedAISuggestionId,
   onReconnectSource,
+  onAISuggestionSelect,
 }: {
   item: MediaItem | null
+  aiSuggestions: AISuggestion[]
+  selectedAISuggestionId: string | null
   onReconnectSource: () => void
+  onAISuggestionSelect: (suggestionId: string) => void
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const animationFrameRef = useRef<number | null>(null)
@@ -185,7 +204,10 @@ function MediaPreview({
             item={item}
             currentTime={currentTime}
             duration={videoDuration || item.metadata?.duration || 0}
+            aiSuggestions={aiSuggestions}
+            selectedAISuggestionId={selectedAISuggestionId}
             onSeek={seekVideo}
+            onAISuggestionSelect={onAISuggestionSelect}
           />
         ) : null}
         <VideoFilmstrip

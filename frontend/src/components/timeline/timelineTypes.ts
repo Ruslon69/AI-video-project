@@ -1,6 +1,8 @@
-export type TimelineTrackId = 'video' | 'scenes' | 'transcript'
+import type { AISuggestion } from '../../types'
 
-export type TimelineItemKind = 'video-preview' | 'scene' | 'transcript'
+export type TimelineTrackId = 'video' | 'scenes' | 'transcript' | 'ai-suggestions'
+
+export type TimelineItemKind = 'video-preview' | 'scene' | 'transcript' | 'ai-suggestion'
 
 export type TimelineItem = {
   id: string
@@ -11,6 +13,7 @@ export type TimelineItem = {
   label: string
   title?: string
   thumbnailUrl?: string
+  aiSuggestion?: AISuggestion
 }
 
 export type TimelineTrack = {
