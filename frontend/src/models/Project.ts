@@ -1,5 +1,5 @@
 import type { AISuggestion, MediaType } from '../types'
-import type { EditOperation } from './EditOperation'
+import type { EditOperation, EditOperationGroup } from './EditOperation'
 import type { Timeline } from './Track'
 
 export interface ProjectAsset {
@@ -27,8 +27,8 @@ export interface ProjectHistoryEntry {
 
 export interface ProjectHistory {
   entries: ProjectHistoryEntry[]
-  undoStack: EditOperation[]
-  redoStack: EditOperation[]
+  undoStack: EditOperationGroup[]
+  redoStack: EditOperationGroup[]
 }
 
 export interface Project {

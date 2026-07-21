@@ -12,9 +12,12 @@ import { useMediaLibrary } from './hooks/useMediaLibrary'
 import { useLocalStorageState } from './hooks/useLocalStorageState'
 import { useTheme } from './hooks/useTheme'
 import { checkBackendHealth } from './services/api'
-import { getDeleteOperations } from './state/ProjectState'
+import {
+  getDeleteOperations,
+  getReviewDecisionOperations,
+} from './state/ProjectState'
 import { useProject } from './state/useProject'
-import type { ProjectOutputSettings } from './types'
+import type { AISuggestion, ProjectOutputSettings } from './types'
 import { applyPlatformDefaults } from './utils/projectSettings'
 import {
   createReviewVersion,
@@ -61,6 +64,10 @@ function App() {
     setTimelineZoom,
     outputSettings,
     setOutputSettings,
+    canUndo,
+    canRedo,
+    undo,
+    redo,
   } = useProject()
   const {
     items: mediaItems,
@@ -89,11 +96,60 @@ function App() {
     () => getDeleteOperations(project),
     [project],
   )
+  const reviewDecisionOperations = useMemo(
+    () => getReviewDecisionOperations(project),
+    [project],
+  )
+  const reviewSuggestions = useMemo(
+    () =>
+      project.suggestions.map((suggestion) => {
+        const decisionOperation = reviewDecisionOperations.find(
+          (operation) => operation.suggestionId === suggestion.id,
+        )
+
+        return {
+          ...suggestion,
+          status: (decisionOperation?.decision ?? 'pending') as AISuggestion['status'],
+        }
+      }),
+    [project.suggestions, reviewDecisionOperations],
+  )
 	  const activeHelpContent = openHelpId ? helpContent[openHelpId] : null
 
   useEffect(() => {
     void checkBackendHealth().then(setIsBackendConnected)
   }, [])
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (
+        event.key.toLowerCase() !== 'z' ||
+        (!event.metaKey && !event.ctrlKey) ||
+        isEditableShortcutTarget(event.target)
+      ) {
+        return
+      }
+
+      if (event.shiftKey) {
+        if (canRedo) {
+          event.preventDefault()
+          redo()
+        }
+        return
+      }
+
+      if (canUndo) {
+        event.preventDefault()
+        undo()
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [canRedo, canUndo, redo, undo])
 
   const handleStageSelect = (stageId: string, substageId?: string) => {
     setProjectState((currentState) => {
@@ -183,7 +239,7 @@ function App() {
             activeItem={activeMediaItem}
 	          outputSettings={outputSettings}
 	          selectedSubstage={selectedSubstage}
-            aiSuggestions={project.suggestions}
+            aiSuggestions={reviewSuggestions}
             deleteOperations={deleteOperations}
             selectedAISuggestionIds={selectedSuggestionIds}
             activeAISuggestionId={activeSuggestionId}
@@ -199,7 +255,7 @@ function App() {
         <ReviewPanel
           stage={selectedStage}
           substage={selectedSubstage}
-          aiSuggestions={project.suggestions}
+          aiSuggestions={reviewSuggestions}
           selectedAISuggestionIds={selectedSuggestionIds}
           activeAISuggestionId={activeSuggestionId}
           onAccept={() =>
@@ -281,6 +337,16 @@ function App() {
         draftQuestion={assistantDraftQuestion}
       />
     </div>
+  )
+}
+
+function isEditableShortcutTarget(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) {
+    return false
+  }
+
+  return Boolean(
+    target.closest('input, textarea, select, [contenteditable="true"]'),
   )
 }
 

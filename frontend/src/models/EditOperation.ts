@@ -2,6 +2,7 @@ export type EditOperationType =
   | 'trim'
   | 'split'
   | 'delete'
+  | 'review-decision'
   | 'speed'
   | 'text-overlay'
   | 'transition'
@@ -35,6 +36,14 @@ export interface DeleteOperation {
   clipId: string
   startTime: number
   endTime: number
+  createdAt: string
+}
+
+export interface ReviewDecisionOperation {
+  id: string
+  type: 'review-decision'
+  suggestionId: string
+  decision: 'accepted' | 'rejected'
   createdAt: string
 }
 
@@ -87,6 +96,7 @@ export type EditOperation =
   | TrimOperation
   | SplitOperation
   | DeleteOperation
+  | ReviewDecisionOperation
   | SpeedOperation
   | TextOverlayOperation
   | TransitionOperation
@@ -97,4 +107,9 @@ export interface EditPlan {
   projectId: string
   operations: EditOperation[]
   createdAt: string
+}
+
+export interface EditOperationGroup {
+  actionId: string
+  operations: EditOperation[]
 }
