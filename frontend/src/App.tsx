@@ -6,19 +6,15 @@ import { AppHeader } from './components/layout/AppHeader'
 import { ProjectSidebar } from './components/project/ProjectSidebar'
 import { VideoWorkspace } from './components/project/VideoWorkspace'
 import { ReviewPanel } from './components/review/ReviewPanel'
-import { mockAISuggestions } from './data/aiSuggestions'
 import { initialProjectState } from './data/stages'
 import { helpContent } from './data/helpContent'
 import { useMediaLibrary } from './hooks/useMediaLibrary'
 import { useLocalStorageState } from './hooks/useLocalStorageState'
 import { useTheme } from './hooks/useTheme'
 import { checkBackendHealth } from './services/api'
+import { useProject } from './state/useProject'
 import type { ProjectOutputSettings } from './types'
-import type { AISuggestion } from './types'
-import {
-  applyPlatformDefaults,
-  defaultProjectOutputSettings,
-} from './utils/projectSettings'
+import { applyPlatformDefaults } from './utils/projectSettings'
 import {
   createReviewVersion,
   deleteSelectedSubstageVersion,
@@ -48,16 +44,23 @@ function App() {
   const [assistantDraftQuestion, setAssistantDraftQuestion] = useState('')
   const [openHelpId, setOpenHelpId] = useState<string | null>(null)
   const [isBackendConnected, setIsBackendConnected] = useState(false)
-  const [aiSuggestions, setAISuggestions] = useState<AISuggestion[]>(mockAISuggestions)
-  const [selectedAISuggestionIds, setSelectedAISuggestionIds] = useState<string[]>(
-    mockAISuggestions[0] ? [mockAISuggestions[0].id] : [],
-  )
-  const [activeAISuggestionId, setActiveAISuggestionId] = useState<string | null>(
-    mockAISuggestions[0]?.id ?? null,
-  )
-  const [outputSettings, setOutputSettings] = useState<ProjectOutputSettings>(
-    defaultProjectOutputSettings,
-  )
+  const {
+    project,
+    selectedSuggestionIds,
+    activeSuggestionId,
+    selectedTimelineItemId,
+    playbackPosition,
+    timelineZoom,
+    activateSuggestion,
+    toggleSuggestionSelection,
+    selectSuggestions,
+    updateSuggestionStatuses,
+    selectTimelineItem,
+    setPlaybackPosition,
+    setTimelineZoom,
+    outputSettings,
+    setOutputSettings,
+  } = useProject()
   const {
     items: mediaItems,
     activeItem: activeMediaItem,
@@ -116,55 +119,16 @@ function App() {
   }
 
 	  const handleOutputSettingsChange = (settings: ProjectOutputSettings) => {
-	    setOutputSettings((currentSettings) => {
-	      if (settings.platform !== currentSettings.platform) {
-	        return applyPlatformDefaults(settings, settings.platform)
-	      }
-
-	      return settings
-	    })
+	    setOutputSettings(
+        settings.platform !== outputSettings.platform
+          ? applyPlatformDefaults(settings, settings.platform)
+          : settings,
+      )
 	  }
 
 	  const handleReconnectMediaSource = () => {
 	    document.getElementById('media-upload')?.click()
 	  }
-
-  const activateAISuggestion = (suggestionId: string) => {
-    setActiveAISuggestionId(suggestionId)
-    setSelectedAISuggestionIds((currentIds) =>
-      currentIds.includes(suggestionId) ? currentIds : [...currentIds, suggestionId],
-    )
-  }
-
-  const toggleAISuggestionSelection = (suggestionId: string) => {
-    setActiveAISuggestionId(suggestionId)
-    setSelectedAISuggestionIds((currentIds) =>
-      currentIds.includes(suggestionId)
-        ? currentIds.filter((id) => id !== suggestionId)
-        : [...currentIds, suggestionId],
-    )
-  }
-
-  const selectAISuggestions = (suggestionIds: string[]) => {
-    setSelectedAISuggestionIds(suggestionIds)
-    setActiveAISuggestionId(suggestionIds[0] ?? null)
-  }
-
-  const updateAISuggestionStatuses = (
-    suggestionIds: string[],
-    status: AISuggestion['status'],
-  ) => {
-    const suggestionIdSet = new Set(suggestionIds)
-
-    setAISuggestions((currentSuggestions) =>
-      currentSuggestions.map((suggestion) =>
-        suggestionIdSet.has(suggestion.id)
-          ? { ...suggestion, status }
-          : suggestion,
-      ),
-    )
-    setActiveAISuggestionId(suggestionIds[0] ?? null)
-  }
 
   return (
     <div className="app-shell">
@@ -211,21 +175,27 @@ function App() {
           }}
         />
 	        <VideoWorkspace
-	          activeItem={activeMediaItem}
+            activeItem={activeMediaItem}
 	          outputSettings={outputSettings}
 	          selectedSubstage={selectedSubstage}
-            aiSuggestions={aiSuggestions}
-            selectedAISuggestionIds={selectedAISuggestionIds}
-            activeAISuggestionId={activeAISuggestionId}
+            aiSuggestions={project.suggestions}
+            selectedAISuggestionIds={selectedSuggestionIds}
+            activeAISuggestionId={activeSuggestionId}
+            selectedTimelineItemId={selectedTimelineItemId}
+            playbackPosition={playbackPosition}
+            timelineZoom={timelineZoom}
 	          onReconnectSource={handleReconnectMediaSource}
-            onAISuggestionActivate={activateAISuggestion}
+            onAISuggestionActivate={activateSuggestion}
+            onTimelineItemSelect={selectTimelineItem}
+            onPlaybackPositionChange={setPlaybackPosition}
+            onTimelineZoomChange={setTimelineZoom}
 	        />
         <ReviewPanel
           stage={selectedStage}
           substage={selectedSubstage}
-          aiSuggestions={aiSuggestions}
-          selectedAISuggestionIds={selectedAISuggestionIds}
-          activeAISuggestionId={activeAISuggestionId}
+          aiSuggestions={project.suggestions}
+          selectedAISuggestionIds={selectedSuggestionIds}
+          activeAISuggestionId={activeSuggestionId}
           onAccept={() =>
             setProjectState((currentState) =>
               setSelectedSubstageStatus(
@@ -282,20 +252,20 @@ function App() {
               keepOnlySelectedSubstageVersion(currentState, versionId),
             )
           }
-          onAISuggestionActivate={activateAISuggestion}
-          onAISuggestionSelectionToggle={toggleAISuggestionSelection}
-          onAISuggestionsSelect={selectAISuggestions}
+          onAISuggestionActivate={activateSuggestion}
+          onAISuggestionSelectionToggle={toggleSuggestionSelection}
+          onAISuggestionsSelect={selectSuggestions}
           onAISuggestionAccept={(suggestionId) =>
-            updateAISuggestionStatuses([suggestionId], 'accepted')
+            updateSuggestionStatuses([suggestionId], 'accepted')
           }
           onAISuggestionReject={(suggestionId) =>
-            updateAISuggestionStatuses([suggestionId], 'rejected')
+            updateSuggestionStatuses([suggestionId], 'rejected')
           }
           onAISuggestionsAccept={(suggestionIds) =>
-            updateAISuggestionStatuses(suggestionIds, 'accepted')
+            updateSuggestionStatuses(suggestionIds, 'accepted')
           }
           onAISuggestionsReject={(suggestionIds) =>
-            updateAISuggestionStatuses(suggestionIds, 'rejected')
+            updateSuggestionStatuses(suggestionIds, 'rejected')
           }
         />
       </main>

@@ -19,6 +19,7 @@ import {
 import { hasPlayableSource } from '../../utils/mediaSource'
 import { statusLabels } from '../../utils/projectState'
 import { VideoTimeline } from '../timeline/VideoTimeline'
+import type { TimelineZoom } from '../timeline/timelineConstants'
 
 type VideoWorkspaceProps = {
   activeItem: MediaItem | null
@@ -27,8 +28,14 @@ type VideoWorkspaceProps = {
   aiSuggestions: AISuggestion[]
   selectedAISuggestionIds: string[]
   activeAISuggestionId: string | null
+  selectedTimelineItemId: string | null
+  playbackPosition: number
+  timelineZoom: TimelineZoom
   onReconnectSource: () => void
   onAISuggestionActivate: (suggestionId: string) => void
+  onTimelineItemSelect: (timelineItemId: string | null) => void
+  onPlaybackPositionChange: (timestamp: number) => void
+  onTimelineZoomChange: (zoom: TimelineZoom) => void
 }
 
 // Coordinates active media preview, player seeking, timeline display, and analysis summaries.
@@ -39,8 +46,14 @@ export function VideoWorkspace({
   aiSuggestions,
   selectedAISuggestionIds,
   activeAISuggestionId,
+  selectedTimelineItemId,
+  playbackPosition,
+  timelineZoom,
   onReconnectSource,
   onAISuggestionActivate,
+  onTimelineItemSelect,
+  onPlaybackPositionChange,
+  onTimelineZoomChange,
 }: VideoWorkspaceProps) {
   return (
     <section className="video-workspace" aria-label="Видеоплеер">
@@ -59,8 +72,14 @@ export function VideoWorkspace({
         aiSuggestions={aiSuggestions}
         selectedAISuggestionIds={selectedAISuggestionIds}
         activeAISuggestionId={activeAISuggestionId}
+        selectedTimelineItemId={selectedTimelineItemId}
+        playbackPosition={playbackPosition}
+        timelineZoom={timelineZoom}
         onReconnectSource={onReconnectSource}
         onAISuggestionActivate={onAISuggestionActivate}
+        onTimelineItemSelect={onTimelineItemSelect}
+        onPlaybackPositionChange={onPlaybackPositionChange}
+        onTimelineZoomChange={onTimelineZoomChange}
       />
       <p className="workspace-file">
         Активный подэтап: {selectedSubstage.title}
@@ -78,19 +97,30 @@ function MediaPreview({
   aiSuggestions,
   selectedAISuggestionIds,
   activeAISuggestionId,
+  selectedTimelineItemId,
+  playbackPosition,
+  timelineZoom,
   onReconnectSource,
   onAISuggestionActivate,
+  onTimelineItemSelect,
+  onPlaybackPositionChange,
+  onTimelineZoomChange,
 }: {
   item: MediaItem | null
   aiSuggestions: AISuggestion[]
   selectedAISuggestionIds: string[]
   activeAISuggestionId: string | null
+  selectedTimelineItemId: string | null
+  playbackPosition: number
+  timelineZoom: TimelineZoom
   onReconnectSource: () => void
   onAISuggestionActivate: (suggestionId: string) => void
+  onTimelineItemSelect: (timelineItemId: string | null) => void
+  onPlaybackPositionChange: (timestamp: number) => void
+  onTimelineZoomChange: (zoom: TimelineZoom) => void
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const animationFrameRef = useRef<number | null>(null)
-  const [currentTime, setCurrentTime] = useState(0)
   const [videoDuration, setVideoDuration] = useState(0)
 
   const stopPlayheadUpdates = useCallback(() => {
@@ -106,9 +136,9 @@ function MediaPreview({
       return
     }
 
-    setCurrentTime(video.currentTime)
+    onPlaybackPositionChange(video.currentTime)
     setVideoDuration(Number.isFinite(video.duration) ? video.duration : 0)
-  }, [])
+  }, [onPlaybackPositionChange])
 
   const startPlayheadUpdates = useCallback(() => {
     stopPlayheadUpdates()
@@ -120,18 +150,14 @@ function MediaPreview({
         return
       }
 
-      setCurrentTime((previousTime) => {
-        if (Math.abs(previousTime - video.currentTime) < 0.1) {
-          return previousTime
-        }
-
-        return video.currentTime
-      })
+      if (Math.abs(playbackPosition - video.currentTime) >= 0.1) {
+        onPlaybackPositionChange(video.currentTime)
+      }
       animationFrameRef.current = window.requestAnimationFrame(update)
     }
 
     animationFrameRef.current = window.requestAnimationFrame(update)
-  }, [stopPlayheadUpdates])
+  }, [onPlaybackPositionChange, playbackPosition, stopPlayheadUpdates])
 
   const seekVideo = useCallback((timestamp: number) => {
     const video = videoRef.current
@@ -144,16 +170,16 @@ function MediaPreview({
       video.currentTime = clampedTimestamp
     }
 
-    setCurrentTime(clampedTimestamp)
-  }, [item?.metadata?.duration])
+    onPlaybackPositionChange(clampedTimestamp)
+  }, [item?.metadata?.duration, onPlaybackPositionChange])
 
   useEffect(() => {
     stopPlayheadUpdates()
-    setCurrentTime(0)
+    onPlaybackPositionChange(0)
     setVideoDuration(item?.metadata?.duration ?? 0)
 
     return stopPlayheadUpdates
-  }, [item?.id, item?.metadata?.duration, stopPlayheadUpdates])
+  }, [item?.id, item?.metadata?.duration, onPlaybackPositionChange, stopPlayheadUpdates])
 
   if (!item) {
     return (
@@ -208,13 +234,17 @@ function MediaPreview({
         {canPlayVideo ? (
           <VideoTimeline
             item={item}
-            currentTime={currentTime}
+            currentTime={playbackPosition}
             duration={videoDuration || item.metadata?.duration || 0}
             aiSuggestions={aiSuggestions}
             selectedAISuggestionIds={selectedAISuggestionIds}
             activeAISuggestionId={activeAISuggestionId}
+            selectedTimelineItemId={selectedTimelineItemId}
+            zoom={timelineZoom}
             onSeek={seekVideo}
             onAISuggestionActivate={onAISuggestionActivate}
+            onTimelineItemSelect={onTimelineItemSelect}
+            onZoomChange={onTimelineZoomChange}
           />
         ) : null}
         <VideoFilmstrip

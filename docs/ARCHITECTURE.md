@@ -59,15 +59,34 @@ Routes should stay thin. They receive uploads, call media services, and map know
 
 ### Project State
 
-Project state owns stages, substages, version history, selected stage/substage, and review comments.
+Project State is the source of truth for durable editor data. It lives behind `ProjectProvider` and is read through `useProject()`.
+
+Current Project State owns:
+
+- Project identity, assets, timeline, tracks, clips, suggestions, operations, and history.
+- AI suggestion status, multi-selection, and active suggestion.
+- Timeline item selection and selected clip ids.
+- Playback position.
+- Timeline zoom.
+- Current project output settings.
+
+These values describe the editable project or current editor position. They should not be duplicated in component-local state.
 
 ### Media State
 
-Media state owns imported files, object URLs, upload/processing progress, metadata, preview frames, scene results, and transcription results.
+Media state currently lives in `useMediaLibrary`. It owns imported browser `File` objects, object URLs, upload/processing progress, metadata, preview frames, scene results, and transcription results.
+
+This remains separate because browser file handles and object URLs are runtime resources, not yet persisted project records. Future persistence work can connect media library entries to `Project.assets`.
+
+### UI State
+
+UI state stays outside Project State. It includes theme, help panel visibility, assistant panel visibility, draft assistant text, backend connection indicator, dialogs, and transient notifications.
+
+UI state can change without changing the project. Project state should change only when editor data, review decisions, selection, playback position, or output settings change.
 
 ### AI Suggestion State
 
-AI suggestion state owns `AISuggestion[]`, selected suggestion ids, active suggestion id, and status changes. Accept and reject operations only update status.
+AI suggestion state is now part of Project State. Accept and reject operations only update `AISuggestion.status`; they do not modify clips, media files, or timeline rendering.
 
 ### Timeline Rendering
 

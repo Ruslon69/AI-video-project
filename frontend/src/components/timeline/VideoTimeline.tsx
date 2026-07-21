@@ -1,5 +1,5 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import type { KeyboardEvent } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef } from 'react'
+import type { KeyboardEvent, PointerEvent } from 'react'
 import type {
   AISuggestion,
   MediaItem,
@@ -18,6 +18,7 @@ import {
   KEYBOARD_SEEK_SECONDS,
   TIMELINE_ZOOM_OPTIONS,
 } from './timelineConstants'
+import type { TimelineZoom } from './timelineConstants'
 
 type VideoTimelineProps = {
   item: MediaItem
@@ -26,8 +27,12 @@ type VideoTimelineProps = {
   aiSuggestions: AISuggestion[]
   selectedAISuggestionIds: string[]
   activeAISuggestionId: string | null
+  selectedTimelineItemId: string | null
+  zoom: TimelineZoom
   onSeek: (timestamp: number) => void
   onAISuggestionActivate: (suggestionId: string) => void
+  onTimelineItemSelect: (timelineItemId: string | null) => void
+  onZoomChange: (zoom: TimelineZoom) => void
 }
 
 type TimelineHeaderProps = {
@@ -63,8 +68,6 @@ type TimelineTick = {
   isMajor: boolean
 }
 
-type TimelineZoom = (typeof TIMELINE_ZOOM_OPTIONS)[number]
-
 // Renders timeline tracks, playhead/ruler controls, and maps media analysis into timeline blocks.
 export function VideoTimeline({
   item,
@@ -73,13 +76,19 @@ export function VideoTimeline({
   aiSuggestions,
   selectedAISuggestionIds,
   activeAISuggestionId,
+  selectedTimelineItemId,
+  zoom,
   onSeek,
   onAISuggestionActivate,
+  onTimelineItemSelect,
+  onZoomChange,
 }: VideoTimelineProps) {
-  const [zoom, setZoom] = useState<TimelineZoom>(100)
-  const [selectedItemId, setSelectedItemId] = useState<string | null>(null)
   const scrollViewportRef = useRef<HTMLDivElement | null>(null)
   const pendingPlayheadOffsetRef = useRef<number | null>(null)
+  const aiSuggestionsRef = useRef(aiSuggestions)
+  const onSeekRef = useRef(onSeek)
+  const safeDurationRef = useRef(0)
+  const isScrubbingRef = useRef(false)
   const safeDuration = Math.max(duration || item.metadata?.duration || 0, 0)
   const clampedCurrentTime = clampTime(currentTime, safeDuration)
   const pixelsPerSecond = getPixelsPerSecond(zoom)
@@ -92,6 +101,12 @@ export function VideoTimeline({
     () => buildTimelineTracks(item, safeDuration, aiSuggestions),
     [item, safeDuration, aiSuggestions],
   )
+
+  useEffect(() => {
+    aiSuggestionsRef.current = aiSuggestions
+    onSeekRef.current = onSeek
+    safeDurationRef.current = safeDuration
+  })
 
   useLayoutEffect(() => {
     const scrollViewport = scrollViewportRef.current
@@ -111,14 +126,14 @@ export function VideoTimeline({
       return
     }
 
-    const activeSuggestion = aiSuggestions.find(
+    const activeSuggestion = aiSuggestionsRef.current.find(
       (suggestion) => suggestion.id === activeAISuggestionId,
     )
 
     if (activeSuggestion) {
-      onSeek(clampTime(activeSuggestion.start, safeDuration))
+      onSeekRef.current(clampTime(activeSuggestion.start, safeDurationRef.current))
     }
-  }, [activeAISuggestionId, aiSuggestions, onSeek, safeDuration])
+  }, [activeAISuggestionId])
 
   const handleSeekFromClientX = (clientX: number, element: HTMLElement) => {
     const rect = element.getBoundingClientRect()
@@ -126,6 +141,38 @@ export function VideoTimeline({
       ? (clientX - rect.left) / pixelsPerSecond
       : 0
     onSeek(clampTime(timestamp, safeDuration))
+  }
+
+  const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0 || isTimelineItemTarget(event.target)) {
+      return
+    }
+
+    event.preventDefault()
+    isScrubbingRef.current = true
+    event.currentTarget.setPointerCapture(event.pointerId)
+    handleSeekFromClientX(event.clientX, event.currentTarget)
+  }
+
+  const handlePointerMove = (event: PointerEvent<HTMLDivElement>) => {
+    if (!isScrubbingRef.current) {
+      return
+    }
+
+    event.preventDefault()
+    handleSeekFromClientX(event.clientX, event.currentTarget)
+  }
+
+  const stopScrubbing = (event: PointerEvent<HTMLDivElement>) => {
+    if (!isScrubbingRef.current) {
+      return
+    }
+
+    isScrubbingRef.current = false
+
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
   }
 
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -139,7 +186,7 @@ export function VideoTimeline({
   }
 
   const handleItemSelect = (timelineItem: TimelineItemModel) => {
-    setSelectedItemId(timelineItem.id)
+    onTimelineItemSelect(timelineItem.id)
     if (timelineItem.aiSuggestion) {
       onAISuggestionActivate(timelineItem.aiSuggestion.id)
     }
@@ -154,7 +201,7 @@ export function VideoTimeline({
         clampedCurrentTime * pixelsPerSecond - scrollViewport.scrollLeft
     }
 
-    setZoom(nextZoom)
+    onZoomChange(nextZoom)
   }
 
   if (safeDuration <= 0) {
@@ -192,7 +239,10 @@ export function VideoTimeline({
             aria-valuemax={Math.round(safeDuration)}
             aria-valuenow={Math.round(clampedCurrentTime)}
             aria-valuetext={`${formatDuration(clampedCurrentTime)} of ${formatDuration(safeDuration)}`}
-            onClick={(event) => handleSeekFromClientX(event.clientX, event.currentTarget)}
+            onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
+            onPointerUp={stopScrubbing}
+            onPointerCancel={stopScrubbing}
             onKeyDown={handleKeyDown}
           >
             <TimelineRuler ticks={ticks} pixelsPerSecond={pixelsPerSecond} />
@@ -202,7 +252,7 @@ export function VideoTimeline({
                   key={track.id}
                   track={track}
                   pixelsPerSecond={pixelsPerSecond}
-                  selectedItemId={selectedItemId}
+                  selectedItemId={selectedTimelineItemId}
                   selectedAISuggestionIds={selectedAISuggestionIds}
                   activeAISuggestionId={activeAISuggestionId}
                   onItemSelect={handleItemSelect}
@@ -218,6 +268,10 @@ export function VideoTimeline({
       </div>
     </section>
   )
+}
+
+function isTimelineItemTarget(target: EventTarget) {
+  return target instanceof Element && Boolean(target.closest('.timeline-item'))
 }
 
 function TimelineHeader({
