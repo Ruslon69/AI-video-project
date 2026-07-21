@@ -77,6 +77,15 @@ export const defaultProjectTimeline: Timeline = {
   id: 'timeline-main',
   name: 'Main Timeline',
   duration: 60,
+  items: [
+    {
+      id: 'timeline-item-primary-video',
+      sourceClipId: 'clip-primary-video',
+      trackId: 'track-video',
+      start: 0,
+      end: 60,
+    },
+  ],
   tracks: [
     {
       id: 'track-video',
@@ -160,10 +169,14 @@ export interface ProjectContextValue extends CentralProjectState {
   setTimelineZoom: (zoom: TimelineZoom) => void
   setOutputSettings: (settings: ProjectOutputSettings) => void
   applyTrimOperation: (
-    clipId: string,
+    timelineItemId: string,
     trimStart: number,
     trimEnd: number,
     sourceDuration: number,
+  ) => void
+  applySplitOperation: (
+    timelineItemId: string,
+    splitTime: number,
   ) => void
   undo: () => void
   redo: () => void

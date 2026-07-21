@@ -7,6 +7,7 @@ import type {
   EditOperation,
   EditOperationGroup,
   ReviewDecisionOperation,
+  SplitOperation,
   TrimOperation,
 } from '../models/EditOperation'
 import {
@@ -15,7 +16,7 @@ import {
 } from './ProjectState'
 import type { CentralProjectState } from './ProjectState'
 import {
-  getFirstEnabledClip,
+  getFirstEnabledTimelineItem,
   getSuggestionReviewStatus,
   normalizeTrimRange,
 } from '../selectors/editSelectors'
@@ -80,11 +81,11 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
 
     setProjectState((currentState) => {
       const createdAt = createOperationTimestamp()
-      const primaryClip = getFirstEnabledClip(currentState.project)
+      const primaryTimelineItem = getFirstEnabledTimelineItem(currentState.project)
       const newOperations: DeleteOperation[] = status === 'accepted'
         ? currentState.project.suggestions
             .filter((suggestion) => suggestionIdSet.has(suggestion.id))
-            .filter(() => Boolean(primaryClip))
+            .filter(() => Boolean(primaryTimelineItem))
             .filter(
               (suggestion) =>
                 getSuggestionReviewStatus(currentState.project, suggestion.id) ===
@@ -93,8 +94,7 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
             .map((suggestion) => ({
               id: createOperationId('delete'),
               type: 'delete',
-              trackId: primaryClip?.trackId ?? '',
-              clipId: primaryClip?.id ?? '',
+              timelineItemId: primaryTimelineItem?.id ?? '',
               startTime: suggestion.start,
               endTime: suggestion.end,
               createdAt,
@@ -189,7 +189,7 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
   }, [])
 
   const applyTrimOperation = useCallback((
-    clipId: string,
+    timelineItemId: string,
     trimStart: number,
     trimEnd: number,
     sourceDuration: number,
@@ -200,7 +200,7 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
       const trimOperation: TrimOperation = {
         id: createOperationId('trim'),
         type: 'trim',
-        clipId,
+        timelineItemId,
         trimStart: normalizedRange.trimStart,
         trimEnd: normalizedRange.trimEnd,
         createdAt,
@@ -208,6 +208,53 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
       const operationGroup: EditOperationGroup = {
         actionId: createOperationId('trim-action'),
         operations: [trimOperation],
+      }
+      const operationState = applyOperationGroup(
+        currentState.project.operations,
+        operationGroup,
+      )
+
+      return {
+        ...currentState,
+        project: {
+          ...currentState.project,
+          operations: operationState.operations,
+          history: {
+            ...currentState.project.history,
+            undoStack: [
+              ...currentState.project.history.undoStack,
+              ...operationState.undoStack,
+            ],
+            redoStack: operationState.redoStack,
+          },
+          updatedAt: createdAt,
+        },
+      }
+    })
+  }, [])
+
+  const applySplitOperation = useCallback((
+    timelineItemId: string,
+    splitTime: number,
+  ) => {
+    if (!Number.isFinite(splitTime)) {
+      return
+    }
+
+    setProjectState((currentState) => {
+      const createdAt = createOperationTimestamp()
+      const splitOperation: SplitOperation = {
+        id: createOperationId('split'),
+        type: 'split',
+        timelineItemId,
+        splitTime,
+        leftTimelineItemId: createOperationId('timeline-item'),
+        rightTimelineItemId: createOperationId('timeline-item'),
+        createdAt,
+      }
+      const operationGroup: EditOperationGroup = {
+        actionId: createOperationId('split-action'),
+        operations: [splitOperation],
       }
       const operationState = applyOperationGroup(
         currentState.project.operations,
@@ -309,6 +356,7 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
       setTimelineZoom,
       setOutputSettings,
       applyTrimOperation,
+      applySplitOperation,
       undo,
       redo,
     }),
@@ -324,6 +372,7 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
       setTimelineZoom,
       setOutputSettings,
       applyTrimOperation,
+      applySplitOperation,
       undo,
       redo,
     ],

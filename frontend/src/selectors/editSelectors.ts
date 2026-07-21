@@ -1,10 +1,11 @@
 import type {
   DeleteOperation,
   ReviewDecisionOperation,
+  SplitOperation,
   TrimOperation,
 } from '../models/EditOperation'
-import type { Clip } from '../models/Clip'
 import type { Project } from '../models/Project'
+import type { TimelineItem } from '../models/Track'
 import type { AISuggestion } from '../types'
 
 export const minimumTrimDuration = 0.1
@@ -33,12 +34,18 @@ export function getTrimOperations(project: Project): TrimOperation[] {
   )
 }
 
+export function getSplitOperations(project: Project): SplitOperation[] {
+  return project.operations.filter(
+    (operation): operation is SplitOperation => operation.type === 'split',
+  )
+}
+
 export function getLatestTrimOperation(
   project: Project,
-  clipId: string,
+  timelineItemId: string,
 ): TrimOperation | undefined {
   return getTrimOperations(project)
-    .filter((operation) => operation.clipId === clipId)
+    .filter((operation) => operation.timelineItemId === timelineItemId)
     .at(-1)
 }
 
@@ -58,10 +65,14 @@ export function getProjectedSuggestions(project: Project): AISuggestion[] {
   }))
 }
 
-export function getFirstEnabledClip(project: Project): Clip | null {
-  return project.timeline.tracks
-    .flatMap((track) => track.clips)
-    .find((clip) => clip.enabled) ?? null
+export function getFirstEnabledTimelineItem(project: Project): TimelineItem | null {
+  return project.timeline.items.find((timelineItem) => {
+    const sourceClip = project.timeline.tracks
+      .flatMap((track) => track.clips)
+      .find((clip) => clip.id === timelineItem.sourceClipId)
+
+    return sourceClip?.enabled ?? false
+  }) ?? null
 }
 
 export function normalizeTrimRange(

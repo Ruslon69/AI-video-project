@@ -30,7 +30,7 @@ type VideoWorkspaceProps = {
   outputSettings: ProjectOutputSettings
   selectedSubstage: EditingSubstage
   aiSuggestions: AISuggestion[]
-  computedClip: ComputedClip | null
+  computedClips: ComputedClip[]
   selectedAISuggestionIds: string[]
   activeAISuggestionId: string | null
   selectedTimelineItemId: string | null
@@ -42,11 +42,12 @@ type VideoWorkspaceProps = {
   onPlaybackPositionChange: (timestamp: number) => void
   onTimelineZoomChange: (zoom: TimelineZoom) => void
   onTrimCommit: (
-    clipId: string,
+    timelineItemId: string,
     trimStart: number,
     trimEnd: number,
     sourceDuration: number,
   ) => void
+  onSplitCommit: (timelineItemId: string, splitTime: number) => void
 }
 
 // Coordinates active media preview, player seeking, timeline display, and analysis summaries.
@@ -55,7 +56,7 @@ export function VideoWorkspace({
   outputSettings,
   selectedSubstage,
   aiSuggestions,
-  computedClip,
+  computedClips,
   selectedAISuggestionIds,
   activeAISuggestionId,
   selectedTimelineItemId,
@@ -67,7 +68,14 @@ export function VideoWorkspace({
   onPlaybackPositionChange,
   onTimelineZoomChange,
   onTrimCommit,
+  onSplitCommit,
 }: VideoWorkspaceProps) {
+  const splitTargetClip = computedClips.find(
+    (clip) =>
+      playbackPosition > clip.visibleStart &&
+      playbackPosition < clip.visibleEnd,
+  ) ?? null
+
   return (
     <section className="video-workspace" aria-label="Видеоплеер">
       <div className="workspace-toolbar">
@@ -83,7 +91,7 @@ export function VideoWorkspace({
       <MediaPreview
         item={activeItem}
         aiSuggestions={aiSuggestions}
-        computedClip={computedClip}
+        computedClips={computedClips}
         selectedAISuggestionIds={selectedAISuggestionIds}
         activeAISuggestionId={activeAISuggestionId}
         selectedTimelineItemId={selectedTimelineItemId}
@@ -96,6 +104,15 @@ export function VideoWorkspace({
         onTimelineZoomChange={onTimelineZoomChange}
         onTrimCommit={onTrimCommit}
       />
+      {splitTargetClip ? (
+        <button
+          type="button"
+          className="secondary-button"
+          onClick={() => onSplitCommit(splitTargetClip.timelineItemId, playbackPosition)}
+        >
+          Split
+        </button>
+      ) : null}
       <p className="workspace-file">
         Активный подэтап: {selectedSubstage.title}
       </p>
@@ -110,7 +127,7 @@ export function VideoWorkspace({
 function MediaPreview({
   item,
   aiSuggestions,
-  computedClip,
+  computedClips,
   selectedAISuggestionIds,
   activeAISuggestionId,
   selectedTimelineItemId,
@@ -125,7 +142,7 @@ function MediaPreview({
 }: {
   item: MediaItem | null
   aiSuggestions: AISuggestion[]
-  computedClip: ComputedClip | null
+  computedClips: ComputedClip[]
   selectedAISuggestionIds: string[]
   activeAISuggestionId: string | null
   selectedTimelineItemId: string | null
@@ -137,7 +154,7 @@ function MediaPreview({
   onPlaybackPositionChange: (timestamp: number) => void
   onTimelineZoomChange: (zoom: TimelineZoom) => void
   onTrimCommit: (
-    clipId: string,
+    timelineItemId: string,
     trimStart: number,
     trimEnd: number,
     sourceDuration: number,
@@ -146,6 +163,7 @@ function MediaPreview({
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const animationFrameRef = useRef<number | null>(null)
   const [videoDuration, setVideoDuration] = useState(0)
+  const firstComputedClip = computedClips[0] ?? null
 
   const stopPlayheadUpdates = useCallback(() => {
     if (animationFrameRef.current !== null) {
@@ -160,7 +178,7 @@ function MediaPreview({
       return
     }
     const normalizedPlaybackTime = normalizePlaybackTime(
-      computedClip,
+      computedClips,
       video.currentTime,
     )
 
@@ -173,13 +191,13 @@ function MediaPreview({
     }
     onPlaybackPositionChange(normalizedPlaybackTime.time)
     setVideoDuration(Number.isFinite(video.duration) ? video.duration : 0)
-  }, [computedClip, onPlaybackPositionChange, stopPlayheadUpdates])
+  }, [computedClips, onPlaybackPositionChange, stopPlayheadUpdates])
 
   const startPlayheadUpdates = useCallback(() => {
     stopPlayheadUpdates()
     const video = videoRef.current
     const initialPlaybackTime = normalizePlaybackTime(
-      computedClip,
+      computedClips,
       video?.currentTime ?? playbackPosition,
     )
 
@@ -200,7 +218,7 @@ function MediaPreview({
       }
 
       const nextPlaybackTime = normalizePlaybackTime(
-        computedClip,
+        computedClips,
         video.currentTime,
       )
 
@@ -222,7 +240,7 @@ function MediaPreview({
     }
 
     animationFrameRef.current = window.requestAnimationFrame(update)
-  }, [computedClip, onPlaybackPositionChange, playbackPosition, stopPlayheadUpdates])
+  }, [computedClips, onPlaybackPositionChange, playbackPosition, stopPlayheadUpdates])
 
   const seekVideo = useCallback((timestamp: number) => {
     const video = videoRef.current
@@ -230,7 +248,7 @@ function MediaPreview({
       ? video.duration
       : item?.metadata?.duration ?? 0
     const normalizedPlaybackTime = normalizePlaybackTime(
-      computedClip,
+      computedClips,
       Math.min(Math.max(timestamp, 0), Math.max(duration, 0)),
     )
 
@@ -244,7 +262,7 @@ function MediaPreview({
 
     onPlaybackPositionChange(normalizedPlaybackTime.time)
   }, [
-    computedClip,
+    computedClips,
     item?.metadata?.duration,
     onPlaybackPositionChange,
     stopPlayheadUpdates,
@@ -253,8 +271,8 @@ function MediaPreview({
   useEffect(() => {
     stopPlayheadUpdates()
     const resetPlaybackTime = normalizePlaybackTime(
-      computedClip,
-      computedClip?.visibleStart ?? 0,
+      computedClips,
+      firstComputedClip?.visibleStart ?? 0,
     )
 
     if (videoRef.current) {
@@ -268,7 +286,9 @@ function MediaPreview({
 
     return stopPlayheadUpdates
   }, [
-    computedClip,
+    computedClips,
+    firstComputedClip?.timelineItemId,
+    firstComputedClip?.visibleStart,
     item?.id,
     item?.metadata?.duration,
     onPlaybackPositionChange,
@@ -278,7 +298,7 @@ function MediaPreview({
   useEffect(() => {
     const video = videoRef.current
     const nextPlaybackPosition = normalizePlaybackTime(
-      computedClip,
+      computedClips,
       playbackPosition,
     )
 
@@ -301,7 +321,7 @@ function MediaPreview({
     }
     onPlaybackPositionChange(nextPlaybackPosition.time)
   }, [
-    computedClip,
+    computedClips,
     onPlaybackPositionChange,
     playbackPosition,
     stopPlayheadUpdates,
@@ -363,7 +383,7 @@ function MediaPreview({
             currentTime={playbackPosition}
             duration={videoDuration || item.metadata?.duration || 0}
             aiSuggestions={aiSuggestions}
-            computedClip={computedClip}
+            computedClips={computedClips}
             selectedAISuggestionIds={selectedAISuggestionIds}
             activeAISuggestionId={activeAISuggestionId}
             selectedTimelineItemId={selectedTimelineItemId}

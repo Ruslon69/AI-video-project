@@ -16,7 +16,7 @@ import {
   getFirstComputedClip,
 } from './selectors/editProjection'
 import {
-  getFirstEnabledClip,
+  getFirstEnabledTimelineItem,
   getProjectedSuggestions,
 } from './selectors/editSelectors'
 import { checkBackendHealth } from './services/api'
@@ -69,6 +69,7 @@ function App() {
     outputSettings,
     setOutputSettings,
     applyTrimOperation,
+    applySplitOperation,
     canUndo,
     canRedo,
     undo,
@@ -97,29 +98,33 @@ function App() {
     () => getProjectStats(projectState.stages),
     [projectState.stages],
   )
-  const activeClipId = useMemo(
-    () => getFirstEnabledClip(project)?.id ?? null,
+  const activeTimelineItem = useMemo(
+    () => getFirstEnabledTimelineItem(project),
     [project],
   )
+  const activeSourceClipId = activeTimelineItem?.sourceClipId ?? null
   const editProjection = useMemo(
     () =>
       buildEditProjection(project, {
-        clipDurations: activeClipId
+        clipDurations: activeSourceClipId
           ? {
-              [activeClipId]:
+              [activeSourceClipId]:
                 activeMediaItem?.metadata?.duration ?? project.timeline.duration,
             }
           : undefined,
       }),
-    [activeClipId, activeMediaItem?.metadata?.duration, project],
+    [activeMediaItem?.metadata?.duration, activeSourceClipId, project],
   )
-  const activeComputedClip = useMemo(
+  const activeComputedClips = useMemo(
     () =>
-      activeClipId
-        ? editProjection.clipsById[activeClipId] ?? getFirstComputedClip(editProjection)
-        : getFirstComputedClip(editProjection),
-    [activeClipId, editProjection],
+      activeSourceClipId
+        ? editProjection.clips.filter(
+            (clip) => clip.sourceClipId === activeSourceClipId,
+          )
+        : [],
+    [activeSourceClipId, editProjection],
   )
+  const activeComputedClip = activeComputedClips[0] ?? getFirstComputedClip(editProjection)
   const reviewSuggestions = useMemo(
     () => getProjectedSuggestions(project),
     [project],
@@ -250,7 +255,7 @@ function App() {
 	          outputSettings={outputSettings}
 	          selectedSubstage={selectedSubstage}
             aiSuggestions={reviewSuggestions}
-            computedClip={activeComputedClip}
+            computedClips={activeComputedClips.length ? activeComputedClips : activeComputedClip ? [activeComputedClip] : []}
             selectedAISuggestionIds={selectedSuggestionIds}
             activeAISuggestionId={activeSuggestionId}
             selectedTimelineItemId={selectedTimelineItemId}
@@ -262,6 +267,7 @@ function App() {
             onPlaybackPositionChange={setPlaybackPosition}
             onTimelineZoomChange={setTimelineZoom}
             onTrimCommit={applyTrimOperation}
+            onSplitCommit={applySplitOperation}
 	        />
         <ReviewPanel
           stage={selectedStage}

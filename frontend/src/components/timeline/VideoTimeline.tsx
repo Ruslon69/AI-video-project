@@ -35,7 +35,7 @@ type VideoTimelineProps = {
   currentTime: number
   duration: number
   aiSuggestions: AISuggestion[]
-  computedClip: ComputedClip | null
+  computedClips: ComputedClip[]
   selectedAISuggestionIds: string[]
   activeAISuggestionId: string | null
   selectedTimelineItemId: string | null
@@ -45,7 +45,7 @@ type VideoTimelineProps = {
   onTimelineItemSelect: (timelineItemId: string | null) => void
   onZoomChange: (zoom: TimelineZoom) => void
   onTrimCommit: (
-    clipId: string,
+    timelineItemId: string,
     trimStart: number,
     trimEnd: number,
     sourceDuration: number,
@@ -73,13 +73,13 @@ type TimelineTrackProps = {
   track: TimelineTrackModel
   pixelsPerSecond: number
   duration: number
-  computedClip: ComputedClip | null
+  computedClips: ComputedClip[]
   selectedItemId: string | null
   selectedAISuggestionIds: string[]
   activeAISuggestionId: string | null
   onItemSelect: (item: TimelineItemModel) => void
   onTrimCommit: (
-    clipId: string,
+    timelineItemId: string,
     trimStart: number,
     trimEnd: number,
     sourceDuration: number,
@@ -99,7 +99,7 @@ export function VideoTimeline({
   currentTime,
   duration,
   aiSuggestions,
-  computedClip,
+  computedClips,
   selectedAISuggestionIds,
   activeAISuggestionId,
   selectedTimelineItemId,
@@ -157,17 +157,17 @@ export function VideoTimeline({
 
     if (activeSuggestion) {
       onSeekRef.current(
-        normalizePlaybackTime(computedClip, activeSuggestion.start).time,
+        normalizePlaybackTime(computedClips, activeSuggestion.start).time,
       )
     }
-  }, [activeAISuggestionId, computedClip])
+  }, [activeAISuggestionId, computedClips])
 
   const handleSeekFromClientX = (clientX: number, element: HTMLElement) => {
     const rect = element.getBoundingClientRect()
     const timestamp = rect.width > 0
       ? (clientX - rect.left) / pixelsPerSecond
       : 0
-    onSeek(normalizePlaybackTime(computedClip, timestamp).time)
+    onSeek(normalizePlaybackTime(computedClips, timestamp).time)
   }
 
   const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
@@ -215,7 +215,7 @@ export function VideoTimeline({
     const direction = event.key === 'ArrowRight' ? 1 : -1
     onSeek(
       normalizePlaybackTime(
-        computedClip,
+        computedClips,
         clampedCurrentTime + direction * KEYBOARD_SEEK_SECONDS,
       ).time,
     )
@@ -226,7 +226,7 @@ export function VideoTimeline({
     if (timelineItem.aiSuggestion) {
       onAISuggestionActivate(timelineItem.aiSuggestion.id)
     }
-    onSeek(normalizePlaybackTime(computedClip, timelineItem.start).time)
+    onSeek(normalizePlaybackTime(computedClips, timelineItem.start).time)
   }
 
   const handleZoomChange = (nextZoom: TimelineZoom) => {
@@ -289,7 +289,7 @@ export function VideoTimeline({
                   track={track}
                   pixelsPerSecond={pixelsPerSecond}
                   duration={safeDuration}
-                  computedClip={computedClip}
+                  computedClips={computedClips}
                   selectedItemId={selectedTimelineItemId}
                   selectedAISuggestionIds={selectedAISuggestionIds}
                   activeAISuggestionId={activeAISuggestionId}
@@ -299,7 +299,7 @@ export function VideoTimeline({
               ))}
             </div>
             <TimelineDeleteOverlays
-              deletedRanges={computedClip?.deletedRanges ?? []}
+              deletedRanges={computedClips.flatMap((clip) => clip.deletedRanges)}
               pixelsPerSecond={pixelsPerSecond}
             />
             <TimelinePlayhead
@@ -409,7 +409,7 @@ function TimelineTrack({
   track,
   pixelsPerSecond,
   duration,
-  computedClip,
+  computedClips,
   selectedItemId,
   selectedAISuggestionIds,
   activeAISuggestionId,
@@ -424,13 +424,16 @@ function TimelineTrack({
     >
       <div className="timeline-track-lane">
         {track.id === 'video' ? (
-          computedClip ? (
-            <TimelineVideoStrip
-              computedClip={computedClip}
-              duration={duration}
-              pixelsPerSecond={pixelsPerSecond}
-              onTrimCommit={onTrimCommit}
-            />
+          computedClips.length ? (
+            computedClips.map((computedClip) => (
+              <TimelineVideoStrip
+                key={computedClip.id}
+                computedClip={computedClip}
+                duration={duration}
+                pixelsPerSecond={pixelsPerSecond}
+                onTrimCommit={onTrimCommit}
+              />
+            ))
           ) : null
         ) : null}
         {track.items.length ? (
@@ -479,7 +482,7 @@ function TimelineVideoStrip({
   duration: number
   pixelsPerSecond: number
   onTrimCommit: (
-    clipId: string,
+    timelineItemId: string,
     trimStart: number,
     trimEnd: number,
     sourceDuration: number,
@@ -514,8 +517,18 @@ function TimelineVideoStrip({
     const currentTrim = previewTrimRef.current ?? trimRange
 
     return edge === 'start'
-      ? normalizeTrimRange(timestamp, currentTrim.trimEnd, computedClip.sourceDuration || duration)
-      : normalizeTrimRange(currentTrim.trimStart, timestamp, computedClip.sourceDuration || duration)
+      ? normalizeTimelineSegmentTrimRange(
+          timestamp,
+          currentTrim.trimEnd,
+          computedClip,
+          duration,
+        )
+      : normalizeTimelineSegmentTrimRange(
+          currentTrim.trimStart,
+          timestamp,
+          computedClip,
+          duration,
+        )
   }
 
   const updatePreviewTrim = (
@@ -584,7 +597,7 @@ function TimelineVideoStrip({
       Math.abs(finalTrim.trimEnd - trimRange.trimEnd) >= minimumTrimDuration / 2
     ) {
       onTrimCommit(
-        computedClip.clipId,
+        computedClip.id,
         finalTrim.trimStart,
         finalTrim.trimEnd,
         computedClip.sourceDuration || duration,
@@ -626,6 +639,37 @@ function TimelineVideoStrip({
       />
     </span>
   )
+}
+
+function normalizeTimelineSegmentTrimRange(
+  trimStart: number,
+  trimEnd: number,
+  computedClip: ComputedClip,
+  duration: number,
+): ClipTrimRange {
+  const trimRange = normalizeTrimRange(
+    trimStart,
+    trimEnd,
+    computedClip.sourceDuration || duration,
+  )
+  const boundedStart = Math.min(
+    Math.max(trimRange.trimStart, computedClip.segmentStart),
+    computedClip.segmentEnd,
+  )
+  const boundedEnd = Math.min(
+    Math.max(trimRange.trimEnd, boundedStart),
+    computedClip.segmentEnd,
+  )
+
+  return boundedStart < boundedEnd
+    ? {
+        trimStart: boundedStart,
+        trimEnd: boundedEnd,
+      }
+    : {
+        trimStart: computedClip.visibleStart,
+        trimEnd: computedClip.visibleEnd,
+      }
 }
 
 function buildTimelineTracks(

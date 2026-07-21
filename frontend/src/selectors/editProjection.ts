@@ -1,7 +1,9 @@
 import type { Clip } from '../models/Clip'
 import type { Project } from '../models/Project'
+import type { TimelineItem } from '../models/Track'
 import {
   getDeleteOperations,
+  getSplitOperations,
   getTrimOperations,
   normalizeTrimRange,
 } from './editSelectors'
@@ -18,9 +20,13 @@ export type PlaybackRange = {
 }
 
 export interface ComputedClip {
-  clipId: string
+  id: string
+  timelineItemId: string
+  sourceClipId: string
   trackId: string
   sourceDuration: number
+  segmentStart: number
+  segmentEnd: number
   visibleStart: number
   visibleEnd: number
   visibleDuration: number
@@ -42,25 +48,46 @@ type EditProjectionOptions = {
   clipDurations?: Record<string, number>
 }
 
+interface ProjectedTimelineItem extends TimelineItem {
+  ancestorTimelineItemIds: string[]
+}
+
 export function buildEditProjection(
   project: Project,
   options: EditProjectionOptions = {},
 ): EditProjection {
   const operationIndex = createOperationIndex(project)
-  const clips = project.timeline.tracks.flatMap((track) =>
-    track.clips.map((clip) =>
-      computeClipProjection(
-        operationIndex,
-        clip,
-        getClipSourceDuration(clip, options.clipDurations?.[clip.id]),
-      ),
-    ),
+  const sourceClipsById = new Map(
+    project.timeline.tracks
+      .flatMap((track) => track.clips)
+      .map((clip) => [clip.id, clip]),
   )
+  const timelineItems = buildProjectedTimelineItems(
+    project.timeline.items,
+    operationIndex,
+  )
+  const clips = timelineItems.flatMap((timelineItem) => {
+    const sourceClip = sourceClipsById.get(timelineItem.sourceClipId)
+
+    return sourceClip
+      ? [
+          computeTimelineItemProjection(
+            operationIndex,
+            timelineItem,
+            sourceClip,
+            getClipSourceDuration(
+              sourceClip,
+              options.clipDurations?.[sourceClip.id],
+            ),
+          ),
+        ]
+      : []
+  })
 
   return {
     clips,
     clipsById: Object.fromEntries(
-      clips.map((clip) => [clip.clipId, clip]),
+      clips.map((clip) => [clip.id, clip]),
     ),
   }
 }
@@ -72,32 +99,54 @@ export function getFirstComputedClip(
 }
 
 export function normalizePlaybackTime(
-  computedClip: ComputedClip | null,
+  computedClip: ComputedClip | ComputedClip[] | null,
   requestedTime: number,
 ): NormalizedPlaybackTime {
   const safeRequestedTime = Number.isFinite(requestedTime)
     ? Math.max(requestedTime, 0)
     : 0
 
-  if (!computedClip) {
+  const computedClips = Array.isArray(computedClip)
+    ? computedClip
+    : computedClip
+      ? [computedClip]
+      : []
+
+  if (!computedClips.length) {
     return {
       time: safeRequestedTime,
       isPlayable: true,
     }
   }
 
-  if (!computedClip.playbackRanges.length) {
+  const visibleStart = Math.min(
+    ...computedClips.map((clip) => clip.visibleStart),
+  )
+  const visibleEnd = Math.max(
+    ...computedClips.map((clip) => clip.visibleEnd),
+  )
+  const playbackRanges = mergeRanges(
+    computedClips
+      .flatMap((clip) => clip.playbackRanges)
+      .map((range, index) => ({
+        operationId: `playback-${index}`,
+        ...range,
+      }))
+      .sort((left, right) => left.start - right.start),
+  )
+
+  if (!playbackRanges.length) {
     return {
-      time: computedClip.visibleStart,
+      time: visibleStart,
       isPlayable: false,
     }
   }
 
   const clippedTime = Math.min(
-    Math.max(safeRequestedTime, computedClip.visibleStart),
-    computedClip.visibleEnd,
+    Math.max(safeRequestedTime, visibleStart),
+    visibleEnd,
   )
-  const activePlaybackRange = computedClip.playbackRanges.find(
+  const activePlaybackRange = playbackRanges.find(
     (range) => clippedTime >= range.start && clippedTime < range.end,
   )
 
@@ -108,7 +157,7 @@ export function normalizePlaybackTime(
     }
   }
 
-  const nextPlaybackRange = computedClip.playbackRanges.find(
+  const nextPlaybackRange = playbackRanges.find(
     (range) => range.start > clippedTime,
   )
 
@@ -118,77 +167,157 @@ export function normalizePlaybackTime(
         isPlayable: true,
       }
     : {
-        time: computedClip.visibleEnd,
+        time: visibleEnd,
         isPlayable: false,
       }
 }
 
 function createOperationIndex(project: Project) {
-  const deleteOperationsByClipId = new Map<
+  const deleteOperationsByTimelineItemId = new Map<
     string,
     ReturnType<typeof getDeleteOperations>
   >()
-  const latestTrimOperationByClipId = new Map<
-    string,
-    ReturnType<typeof getTrimOperations>[number]
-  >()
+  const splitOperations = getSplitOperations(project)
+  const trimOperations = getTrimOperations(project)
 
   for (const operation of getDeleteOperations(project)) {
-    const operations = deleteOperationsByClipId.get(operation.clipId) ?? []
+    const operations = deleteOperationsByTimelineItemId.get(operation.timelineItemId) ?? []
 
     operations.push(operation)
-    deleteOperationsByClipId.set(operation.clipId, operations)
-  }
-
-  for (const operation of getTrimOperations(project)) {
-    latestTrimOperationByClipId.set(operation.clipId, operation)
+    deleteOperationsByTimelineItemId.set(operation.timelineItemId, operations)
   }
 
   return {
-    deleteOperationsByClipId,
-    latestTrimOperationByClipId,
+    deleteOperationsByTimelineItemId,
+    splitOperations,
+    trimOperations,
   }
 }
 
-function computeClipProjection(
+function buildProjectedTimelineItems(
+  initialTimelineItems: TimelineItem[],
   operationIndex: ReturnType<typeof createOperationIndex>,
-  clip: Clip,
+): ProjectedTimelineItem[] {
+  let timelineItems: ProjectedTimelineItem[] = initialTimelineItems.map(
+    (timelineItem) => ({
+      ...timelineItem,
+      ancestorTimelineItemIds: [timelineItem.id],
+    }),
+  )
+
+  for (const operation of operationIndex.splitOperations) {
+    timelineItems = timelineItems.flatMap((timelineItem) => {
+      if (
+        timelineItem.id !== operation.timelineItemId ||
+        operation.splitTime <= timelineItem.start ||
+        operation.splitTime >= timelineItem.end
+      ) {
+        return [timelineItem]
+      }
+
+        return [
+          {
+            ...timelineItem,
+            id: operation.leftTimelineItemId,
+            end: operation.splitTime,
+            ancestorTimelineItemIds: [
+              ...timelineItem.ancestorTimelineItemIds,
+              operation.leftTimelineItemId,
+            ],
+          },
+          {
+            ...timelineItem,
+            id: operation.rightTimelineItemId,
+            start: operation.splitTime,
+            ancestorTimelineItemIds: [
+              ...timelineItem.ancestorTimelineItemIds,
+              operation.rightTimelineItemId,
+            ],
+          },
+        ]
+    })
+  }
+
+  return timelineItems
+}
+
+function computeTimelineItemProjection(
+  operationIndex: ReturnType<typeof createOperationIndex>,
+  timelineItem: ProjectedTimelineItem,
+  sourceClip: Clip,
   sourceDuration: number,
 ): ComputedClip {
-  const trimOperation = operationIndex.latestTrimOperationByClipId.get(clip.id)
-  const trimRange = trimOperation
-    ? normalizeTrimRange(
+  const ancestorTimelineItemIdSet = new Set(timelineItem.ancestorTimelineItemIds)
+  const trimOperation = operationIndex.trimOperations
+    .filter((operation) => ancestorTimelineItemIdSet.has(operation.timelineItemId))
+    .at(-1)
+  const visibleRange = trimOperation
+    ? normalizeSegmentTrimRange(
         trimOperation.trimStart,
         trimOperation.trimEnd,
-        sourceDuration,
+        timelineItem,
       )
-    : normalizeTrimRange(clip.source.start, clip.source.end, sourceDuration)
-  const deletedRanges = (operationIndex.deleteOperationsByClipId.get(clip.id) ?? [])
+    : {
+        start: timelineItem.start,
+        end: timelineItem.end,
+      }
+  const deletedRanges = timelineItem.ancestorTimelineItemIds
+    .flatMap((timelineItemId) => (
+      operationIndex.deleteOperationsByTimelineItemId.get(timelineItemId) ?? []
+    ))
     .map((operation) => ({
       operationId: operation.id,
-      start: Math.max(operation.startTime, trimRange.trimStart),
-      end: Math.min(operation.endTime, trimRange.trimEnd),
+      start: Math.max(operation.startTime, visibleRange.start),
+      end: Math.min(operation.endTime, visibleRange.end),
     }))
     .filter((range) => range.start < range.end)
     .sort((left, right) => left.start - right.start)
   const playbackRanges = subtractDeletedRanges(
     {
-      start: trimRange.trimStart,
-      end: trimRange.trimEnd,
+      start: visibleRange.start,
+      end: visibleRange.end,
     },
     deletedRanges,
   )
 
   return {
-    clipId: clip.id,
-    trackId: clip.trackId,
+    id: timelineItem.id,
+    timelineItemId: timelineItem.id,
+    sourceClipId: sourceClip.id,
+    trackId: timelineItem.trackId,
     sourceDuration,
-    visibleStart: trimRange.trimStart,
-    visibleEnd: trimRange.trimEnd,
-    visibleDuration: trimRange.trimEnd - trimRange.trimStart,
+    segmentStart: timelineItem.start,
+    segmentEnd: timelineItem.end,
+    visibleStart: visibleRange.start,
+    visibleEnd: visibleRange.end,
+    visibleDuration: visibleRange.end - visibleRange.start,
     deletedRanges,
     playbackRanges,
   }
+}
+
+function normalizeSegmentTrimRange(
+  trimStart: number,
+  trimEnd: number,
+  segmentRange: { start: number; end: number },
+): PlaybackRange {
+  const trimRange = normalizeTrimRange(
+    trimStart,
+    trimEnd,
+    segmentRange.end,
+  )
+  const start = Math.min(
+    Math.max(trimRange.trimStart, segmentRange.start),
+    segmentRange.end,
+  )
+  const end = Math.min(
+    Math.max(trimRange.trimEnd, start),
+    segmentRange.end,
+  )
+
+  return start < end
+    ? { start, end }
+    : segmentRange
 }
 
 function getClipSourceDuration(clip: Clip, durationOverride?: number) {

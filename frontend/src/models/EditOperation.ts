@@ -16,10 +16,6 @@ export interface EditOperationBase<TType extends EditOperationType, TParameters>
   createdAt: string
 }
 
-export interface SplitOperationParameters {
-  timestamp: number
-}
-
 export interface DeleteOperationParameters {
   ripple: boolean
 }
@@ -27,8 +23,7 @@ export interface DeleteOperationParameters {
 export interface DeleteOperation {
   id: string
   type: 'delete'
-  trackId: string
-  clipId: string
+  timelineItemId: string
   startTime: number
   endTime: number
   createdAt: string
@@ -45,9 +40,19 @@ export interface ReviewDecisionOperation {
 export interface TrimOperation {
   id: string
   type: 'trim'
-  clipId: string
+  timelineItemId: string
   trimStart: number
   trimEnd: number
+  createdAt: string
+}
+
+export interface SplitOperation {
+  id: string
+  type: 'split'
+  timelineItemId: string
+  splitTime: number
+  leftTimelineItemId: string
+  rightTimelineItemId: string
   createdAt: string
 }
 
@@ -77,9 +82,6 @@ export interface AudioOperationParameters {
   fadeIn?: number
   fadeOut?: number
 }
-
-export interface SplitOperation
-  extends EditOperationBase<'split', SplitOperationParameters> {}
 
 export interface SpeedOperation
   extends EditOperationBase<'speed', SpeedOperationParameters> {}
