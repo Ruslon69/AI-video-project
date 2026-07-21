@@ -3,6 +3,7 @@ import type { AISuggestion, ProjectOutputSettings } from '../types'
 import type { Clip } from '../models/Clip'
 import type { Project, ProjectSuggestion } from '../models/Project'
 import type { Timeline } from '../models/Track'
+import type { DeleteOperation } from '../models/EditOperation'
 import type { TimelineZoom } from '../components/timeline/timelineConstants'
 import { defaultProjectOutputSettings } from '../utils/projectSettings'
 
@@ -154,6 +155,15 @@ export interface ProjectContextValue extends CentralProjectState {
   setPlaybackPosition: (timestamp: number) => void
   setTimelineZoom: (zoom: TimelineZoom) => void
   setOutputSettings: (settings: ProjectOutputSettings) => void
+}
+
+export const primaryVideoTrackId = 'track-video'
+export const primaryVideoClipId = 'clip-primary-video'
+
+export function getDeleteOperations(project: Project): DeleteOperation[] {
+  return project.operations.filter(
+    (operation): operation is DeleteOperation => operation.type === 'delete',
+  )
 }
 
 export const defaultProjectState: CentralProjectState = {

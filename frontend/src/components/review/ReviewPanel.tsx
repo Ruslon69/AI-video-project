@@ -353,7 +353,7 @@ function AISuggestionsPanel({
                 <span>{suggestion.reason}</span>
               </span>
               <span className={`ai-suggestion-status ai-suggestion-status-${suggestion.status}`}>
-                {suggestion.status}
+                {getAISuggestionStatusLabel(suggestion.status)}
               </span>
             </button>
             <dl className="ai-suggestion-meta">
@@ -409,6 +409,14 @@ function getAISuggestionCounts(suggestions: AISuggestion[]) {
       rejected: 0,
     },
   )
+}
+
+function getAISuggestionStatusLabel(status: AISuggestion['status']) {
+  if (status === 'accepted') {
+    return 'Applied'
+  }
+
+  return status
 }
 
 function VersionItem({

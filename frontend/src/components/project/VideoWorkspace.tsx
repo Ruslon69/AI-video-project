@@ -6,6 +6,7 @@ import type {
   ProjectOutputSettings,
   VideoMetadata,
 } from '../../types'
+import type { DeleteOperation } from '../../models/EditOperation'
 import {
   formatBitrate,
   formatDuration,
@@ -26,6 +27,7 @@ type VideoWorkspaceProps = {
   outputSettings: ProjectOutputSettings
   selectedSubstage: EditingSubstage
   aiSuggestions: AISuggestion[]
+  deleteOperations: DeleteOperation[]
   selectedAISuggestionIds: string[]
   activeAISuggestionId: string | null
   selectedTimelineItemId: string | null
@@ -44,6 +46,7 @@ export function VideoWorkspace({
   outputSettings,
   selectedSubstage,
   aiSuggestions,
+  deleteOperations,
   selectedAISuggestionIds,
   activeAISuggestionId,
   selectedTimelineItemId,
@@ -70,6 +73,7 @@ export function VideoWorkspace({
       <MediaPreview
         item={activeItem}
         aiSuggestions={aiSuggestions}
+        deleteOperations={deleteOperations}
         selectedAISuggestionIds={selectedAISuggestionIds}
         activeAISuggestionId={activeAISuggestionId}
         selectedTimelineItemId={selectedTimelineItemId}
@@ -95,6 +99,7 @@ export function VideoWorkspace({
 function MediaPreview({
   item,
   aiSuggestions,
+  deleteOperations,
   selectedAISuggestionIds,
   activeAISuggestionId,
   selectedTimelineItemId,
@@ -108,6 +113,7 @@ function MediaPreview({
 }: {
   item: MediaItem | null
   aiSuggestions: AISuggestion[]
+  deleteOperations: DeleteOperation[]
   selectedAISuggestionIds: string[]
   activeAISuggestionId: string | null
   selectedTimelineItemId: string | null
@@ -150,28 +156,36 @@ function MediaPreview({
         return
       }
 
-      if (Math.abs(playbackPosition - video.currentTime) >= 0.1) {
+      const nextPlaybackTime = getPlayableTime(video.currentTime, deleteOperations)
+
+      if (nextPlaybackTime !== video.currentTime) {
+        video.currentTime = nextPlaybackTime
+        onPlaybackPositionChange(nextPlaybackTime)
+      } else if (Math.abs(playbackPosition - video.currentTime) >= 0.1) {
         onPlaybackPositionChange(video.currentTime)
       }
       animationFrameRef.current = window.requestAnimationFrame(update)
     }
 
     animationFrameRef.current = window.requestAnimationFrame(update)
-  }, [onPlaybackPositionChange, playbackPosition, stopPlayheadUpdates])
+  }, [deleteOperations, onPlaybackPositionChange, playbackPosition, stopPlayheadUpdates])
 
   const seekVideo = useCallback((timestamp: number) => {
     const video = videoRef.current
     const duration = video && Number.isFinite(video.duration)
       ? video.duration
       : item?.metadata?.duration ?? 0
-    const clampedTimestamp = Math.min(Math.max(timestamp, 0), Math.max(duration, 0))
+    const clampedTimestamp = getPlayableTime(
+      Math.min(Math.max(timestamp, 0), Math.max(duration, 0)),
+      deleteOperations,
+    )
 
     if (video) {
       video.currentTime = clampedTimestamp
     }
 
     onPlaybackPositionChange(clampedTimestamp)
-  }, [item?.metadata?.duration, onPlaybackPositionChange])
+  }, [deleteOperations, item?.metadata?.duration, onPlaybackPositionChange])
 
   useEffect(() => {
     stopPlayheadUpdates()
@@ -237,6 +251,7 @@ function MediaPreview({
             currentTime={playbackPosition}
             duration={videoDuration || item.metadata?.duration || 0}
             aiSuggestions={aiSuggestions}
+            deleteOperations={deleteOperations}
             selectedAISuggestionIds={selectedAISuggestionIds}
             activeAISuggestionId={activeAISuggestionId}
             selectedTimelineItemId={selectedTimelineItemId}
@@ -278,6 +293,16 @@ function MediaPreview({
       </div>
     </div>
   )
+}
+
+function getPlayableTime(timestamp: number, deleteOperations: DeleteOperation[]) {
+  const activeDeleteOperation = deleteOperations.find(
+    (operation) =>
+      timestamp >= operation.startTime &&
+      timestamp < operation.endTime,
+  )
+
+  return activeDeleteOperation ? activeDeleteOperation.endTime : timestamp
 }
 
 function MissingVideoSource({

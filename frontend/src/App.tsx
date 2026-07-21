@@ -12,6 +12,7 @@ import { useMediaLibrary } from './hooks/useMediaLibrary'
 import { useLocalStorageState } from './hooks/useLocalStorageState'
 import { useTheme } from './hooks/useTheme'
 import { checkBackendHealth } from './services/api'
+import { getDeleteOperations } from './state/ProjectState'
 import { useProject } from './state/useProject'
 import type { ProjectOutputSettings } from './types'
 import { applyPlatformDefaults } from './utils/projectSettings'
@@ -83,6 +84,10 @@ function App() {
   const stats = useMemo(
     () => getProjectStats(projectState.stages),
     [projectState.stages],
+  )
+  const deleteOperations = useMemo(
+    () => getDeleteOperations(project),
+    [project],
   )
 	  const activeHelpContent = openHelpId ? helpContent[openHelpId] : null
 
@@ -179,6 +184,7 @@ function App() {
 	          outputSettings={outputSettings}
 	          selectedSubstage={selectedSubstage}
             aiSuggestions={project.suggestions}
+            deleteOperations={deleteOperations}
             selectedAISuggestionIds={selectedSuggestionIds}
             activeAISuggestionId={activeSuggestionId}
             selectedTimelineItemId={selectedTimelineItemId}

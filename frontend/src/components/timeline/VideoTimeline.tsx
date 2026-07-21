@@ -7,6 +7,7 @@ import type {
   VideoScene,
   VideoTranscriptSegment,
 } from '../../types'
+import type { DeleteOperation } from '../../models/EditOperation'
 import { getAISuggestionTitle } from '../../utils/aiSuggestions'
 import { formatDuration } from '../../utils/mediaFormat'
 import type {
@@ -25,6 +26,7 @@ type VideoTimelineProps = {
   currentTime: number
   duration: number
   aiSuggestions: AISuggestion[]
+  deleteOperations: DeleteOperation[]
   selectedAISuggestionIds: string[]
   activeAISuggestionId: string | null
   selectedTimelineItemId: string | null
@@ -74,6 +76,7 @@ export function VideoTimeline({
   currentTime,
   duration,
   aiSuggestions,
+  deleteOperations,
   selectedAISuggestionIds,
   activeAISuggestionId,
   selectedTimelineItemId,
@@ -259,6 +262,10 @@ export function VideoTimeline({
                 />
               ))}
             </div>
+            <TimelineDeleteOverlays
+              deleteOperations={deleteOperations}
+              pixelsPerSecond={pixelsPerSecond}
+            />
             <TimelinePlayhead
               currentTime={clampedCurrentTime}
               pixelsPerSecond={pixelsPerSecond}
@@ -267,6 +274,32 @@ export function VideoTimeline({
         </div>
       </div>
     </section>
+  )
+}
+
+function TimelineDeleteOverlays({
+  deleteOperations,
+  pixelsPerSecond,
+}: {
+  deleteOperations: DeleteOperation[]
+  pixelsPerSecond: number
+}) {
+  return (
+    <div className="timeline-delete-overlay-layer" aria-hidden="true">
+      {deleteOperations.map((operation) => (
+        <span
+          key={operation.id}
+          className="timeline-delete-overlay"
+          style={{
+            left: `${operation.startTime * pixelsPerSecond}px`,
+            width: `${Math.max(
+              (operation.endTime - operation.startTime) * pixelsPerSecond,
+              4,
+            )}px`,
+          }}
+        />
+      ))}
+    </div>
   )
 }
 

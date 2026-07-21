@@ -28,6 +28,16 @@ export interface DeleteOperationParameters {
   ripple: boolean
 }
 
+export interface DeleteOperation {
+  id: string
+  type: 'delete'
+  trackId: string
+  clipId: string
+  startTime: number
+  endTime: number
+  createdAt: string
+}
+
 export interface SpeedOperationParameters {
   playbackRate: number
   preservePitch: boolean
@@ -60,9 +70,6 @@ export interface TrimOperation
 
 export interface SplitOperation
   extends EditOperationBase<'split', SplitOperationParameters> {}
-
-export interface DeleteOperation
-  extends EditOperationBase<'delete', DeleteOperationParameters> {}
 
 export interface SpeedOperation
   extends EditOperationBase<'speed', SpeedOperationParameters> {}

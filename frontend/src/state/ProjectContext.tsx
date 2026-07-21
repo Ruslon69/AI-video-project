@@ -4,6 +4,8 @@ import type { AISuggestion, ProjectOutputSettings } from '../types'
 import type { TimelineZoom } from '../components/timeline/timelineConstants'
 import {
   defaultProjectState,
+  primaryVideoClipId,
+  primaryVideoTrackId,
   ProjectContext,
 } from './ProjectState'
 import type { CentralProjectState } from './ProjectState'
@@ -57,10 +59,30 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
       project: {
         ...currentState.project,
         suggestions: currentState.project.suggestions.map((suggestion) =>
-          suggestionIdSet.has(suggestion.id)
-            ? { ...suggestion, status }
-            : suggestion,
+          suggestionIdSet.has(suggestion.id) ? { ...suggestion, status } : suggestion,
         ),
+        operations: status === 'accepted'
+          ? [
+              ...currentState.project.operations,
+              ...currentState.project.suggestions
+                .filter((suggestion) => suggestionIdSet.has(suggestion.id))
+                .filter(
+                  (suggestion) =>
+                    !currentState.project.operations.some(
+                      (operation) => operation.id === `delete-${suggestion.id}`,
+                    ),
+                )
+                .map((suggestion) => ({
+                  id: `delete-${suggestion.id}`,
+                  type: 'delete' as const,
+                  trackId: primaryVideoTrackId,
+                  clipId: primaryVideoClipId,
+                  startTime: suggestion.start,
+                  endTime: suggestion.end,
+                  createdAt: new Date().toISOString(),
+                })),
+            ]
+          : currentState.project.operations,
         updatedAt: new Date().toISOString(),
       },
     }))

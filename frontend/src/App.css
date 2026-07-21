@@ -1240,6 +1240,25 @@ textarea:focus-visible {
   gap: 6px;
 }
 
+.timeline-delete-overlay-layer {
+  position: absolute;
+  top: calc(var(--timeline-ruler-height) + 6px + 5px);
+  right: 0;
+  left: 0;
+  z-index: 1;
+  height: calc(var(--timeline-track-height) - 10px);
+  pointer-events: none;
+}
+
+.timeline-delete-overlay {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border: 1px solid rgba(216, 83, 83, 0.72);
+  border-radius: 5px;
+  background: rgba(216, 83, 83, 0.28);
+}
+
 .timeline-track {
   min-width: 0;
 }
@@ -1385,7 +1404,7 @@ textarea:focus-visible {
   position: absolute;
   top: 0;
   bottom: 0;
-  z-index: 2;
+  z-index: 3;
   width: 2px;
   background: var(--danger);
   pointer-events: none;
