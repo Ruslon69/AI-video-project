@@ -16,11 +16,6 @@ export interface EditOperationBase<TType extends EditOperationType, TParameters>
   createdAt: string
 }
 
-export interface TrimOperationParameters {
-  start: number
-  end: number
-}
-
 export interface SplitOperationParameters {
   timestamp: number
 }
@@ -44,6 +39,15 @@ export interface ReviewDecisionOperation {
   type: 'review-decision'
   suggestionId: string
   decision: 'accepted' | 'rejected'
+  createdAt: string
+}
+
+export interface TrimOperation {
+  id: string
+  type: 'trim'
+  clipId: string
+  trimStart: number
+  trimEnd: number
   createdAt: string
 }
 
@@ -73,9 +77,6 @@ export interface AudioOperationParameters {
   fadeIn?: number
   fadeOut?: number
 }
-
-export interface TrimOperation
-  extends EditOperationBase<'trim', TrimOperationParameters> {}
 
 export interface SplitOperation
   extends EditOperationBase<'split', SplitOperationParameters> {}

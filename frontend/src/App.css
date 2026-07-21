@@ -1275,12 +1275,35 @@ textarea:focus-visible {
 
 .timeline-video-strip {
   position: absolute;
-  inset: 5px 0;
+  top: 5px;
+  bottom: 5px;
   border: 1px solid var(--border);
   border-radius: 5px;
   background:
     linear-gradient(90deg, rgba(47, 180, 124, 0.14), rgba(50, 103, 200, 0.12)),
     var(--panel-strong);
+}
+
+.timeline-trim-handle {
+  position: absolute;
+  top: -1px;
+  bottom: -1px;
+  z-index: 2;
+  width: 10px;
+  border: 1px solid var(--accent);
+  background: rgba(47, 180, 124, 0.32);
+  cursor: ew-resize;
+  touch-action: none;
+}
+
+.timeline-trim-handle-left {
+  left: -5px;
+  border-radius: 5px 2px 2px 5px;
+}
+
+.timeline-trim-handle-right {
+  right: -5px;
+  border-radius: 2px 5px 5px 2px;
 }
 
 .timeline-item,

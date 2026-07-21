@@ -11,13 +11,17 @@ import { helpContent } from './data/helpContent'
 import { useMediaLibrary } from './hooks/useMediaLibrary'
 import { useLocalStorageState } from './hooks/useLocalStorageState'
 import { useTheme } from './hooks/useTheme'
-import { checkBackendHealth } from './services/api'
 import {
-  getDeleteOperations,
-  getReviewDecisionOperations,
-} from './state/ProjectState'
+  buildEditProjection,
+  getFirstComputedClip,
+} from './selectors/editProjection'
+import {
+  getFirstEnabledClip,
+  getProjectedSuggestions,
+} from './selectors/editSelectors'
+import { checkBackendHealth } from './services/api'
 import { useProject } from './state/useProject'
-import type { AISuggestion, ProjectOutputSettings } from './types'
+import type { ProjectOutputSettings } from './types'
 import { applyPlatformDefaults } from './utils/projectSettings'
 import {
   createReviewVersion,
@@ -64,6 +68,7 @@ function App() {
     setTimelineZoom,
     outputSettings,
     setOutputSettings,
+    applyTrimOperation,
     canUndo,
     canRedo,
     undo,
@@ -92,27 +97,32 @@ function App() {
     () => getProjectStats(projectState.stages),
     [projectState.stages],
   )
-  const deleteOperations = useMemo(
-    () => getDeleteOperations(project),
+  const activeClipId = useMemo(
+    () => getFirstEnabledClip(project)?.id ?? null,
     [project],
   )
-  const reviewDecisionOperations = useMemo(
-    () => getReviewDecisionOperations(project),
-    [project],
+  const editProjection = useMemo(
+    () =>
+      buildEditProjection(project, {
+        clipDurations: activeClipId
+          ? {
+              [activeClipId]:
+                activeMediaItem?.metadata?.duration ?? project.timeline.duration,
+            }
+          : undefined,
+      }),
+    [activeClipId, activeMediaItem?.metadata?.duration, project],
+  )
+  const activeComputedClip = useMemo(
+    () =>
+      activeClipId
+        ? editProjection.clipsById[activeClipId] ?? getFirstComputedClip(editProjection)
+        : getFirstComputedClip(editProjection),
+    [activeClipId, editProjection],
   )
   const reviewSuggestions = useMemo(
-    () =>
-      project.suggestions.map((suggestion) => {
-        const decisionOperation = reviewDecisionOperations.find(
-          (operation) => operation.suggestionId === suggestion.id,
-        )
-
-        return {
-          ...suggestion,
-          status: (decisionOperation?.decision ?? 'pending') as AISuggestion['status'],
-        }
-      }),
-    [project.suggestions, reviewDecisionOperations],
+    () => getProjectedSuggestions(project),
+    [project],
   )
 	  const activeHelpContent = openHelpId ? helpContent[openHelpId] : null
 
@@ -240,7 +250,7 @@ function App() {
 	          outputSettings={outputSettings}
 	          selectedSubstage={selectedSubstage}
             aiSuggestions={reviewSuggestions}
-            deleteOperations={deleteOperations}
+            computedClip={activeComputedClip}
             selectedAISuggestionIds={selectedSuggestionIds}
             activeAISuggestionId={activeSuggestionId}
             selectedTimelineItemId={selectedTimelineItemId}
@@ -251,6 +261,7 @@ function App() {
             onTimelineItemSelect={selectTimelineItem}
             onPlaybackPositionChange={setPlaybackPosition}
             onTimelineZoomChange={setTimelineZoom}
+            onTrimCommit={applyTrimOperation}
 	        />
         <ReviewPanel
           stage={selectedStage}

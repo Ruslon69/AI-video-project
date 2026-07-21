@@ -3,11 +3,7 @@ import type { ProjectOutputSettings } from '../types'
 import type { Clip } from '../models/Clip'
 import type { Project, ProjectSuggestion } from '../models/Project'
 import type { Timeline } from '../models/Track'
-import type {
-  DeleteOperation,
-  EditOperationGroup,
-  ReviewDecisionOperation,
-} from '../models/EditOperation'
+import type { EditOperationGroup } from '../models/EditOperation'
 import type { TimelineZoom } from '../components/timeline/timelineConstants'
 import { defaultProjectOutputSettings } from '../utils/projectSettings'
 
@@ -163,24 +159,14 @@ export interface ProjectContextValue extends CentralProjectState {
   setPlaybackPosition: (timestamp: number) => void
   setTimelineZoom: (zoom: TimelineZoom) => void
   setOutputSettings: (settings: ProjectOutputSettings) => void
+  applyTrimOperation: (
+    clipId: string,
+    trimStart: number,
+    trimEnd: number,
+    sourceDuration: number,
+  ) => void
   undo: () => void
   redo: () => void
-}
-
-export const primaryVideoTrackId = 'track-video'
-export const primaryVideoClipId = 'clip-primary-video'
-
-export function getDeleteOperations(project: Project): DeleteOperation[] {
-  return project.operations.filter(
-    (operation): operation is DeleteOperation => operation.type === 'delete',
-  )
-}
-
-export function getReviewDecisionOperations(project: Project): ReviewDecisionOperation[] {
-  return project.operations.filter(
-    (operation): operation is ReviewDecisionOperation =>
-      operation.type === 'review-decision',
-  )
 }
 
 export const defaultProjectState: CentralProjectState = {

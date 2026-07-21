@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent, PointerEvent } from 'react'
 import type {
   AISuggestion,
@@ -7,7 +7,16 @@ import type {
   VideoScene,
   VideoTranscriptSegment,
 } from '../../types'
-import type { DeleteOperation } from '../../models/EditOperation'
+import {
+  normalizePlaybackTime,
+  type ComputedClip,
+  type DeleteRange,
+} from '../../selectors/editProjection'
+import {
+  minimumTrimDuration,
+  normalizeTrimRange,
+  type ClipTrimRange,
+} from '../../selectors/editSelectors'
 import { getAISuggestionTitle } from '../../utils/aiSuggestions'
 import { formatDuration } from '../../utils/mediaFormat'
 import type {
@@ -26,7 +35,7 @@ type VideoTimelineProps = {
   currentTime: number
   duration: number
   aiSuggestions: AISuggestion[]
-  deleteOperations: DeleteOperation[]
+  computedClip: ComputedClip | null
   selectedAISuggestionIds: string[]
   activeAISuggestionId: string | null
   selectedTimelineItemId: string | null
@@ -35,6 +44,12 @@ type VideoTimelineProps = {
   onAISuggestionActivate: (suggestionId: string) => void
   onTimelineItemSelect: (timelineItemId: string | null) => void
   onZoomChange: (zoom: TimelineZoom) => void
+  onTrimCommit: (
+    clipId: string,
+    trimStart: number,
+    trimEnd: number,
+    sourceDuration: number,
+  ) => void
 }
 
 type TimelineHeaderProps = {
@@ -57,10 +72,18 @@ type TimelinePlayheadProps = {
 type TimelineTrackProps = {
   track: TimelineTrackModel
   pixelsPerSecond: number
+  duration: number
+  computedClip: ComputedClip | null
   selectedItemId: string | null
   selectedAISuggestionIds: string[]
   activeAISuggestionId: string | null
   onItemSelect: (item: TimelineItemModel) => void
+  onTrimCommit: (
+    clipId: string,
+    trimStart: number,
+    trimEnd: number,
+    sourceDuration: number,
+  ) => void
 }
 
 type TimelineTick = {
@@ -76,7 +99,7 @@ export function VideoTimeline({
   currentTime,
   duration,
   aiSuggestions,
-  deleteOperations,
+  computedClip,
   selectedAISuggestionIds,
   activeAISuggestionId,
   selectedTimelineItemId,
@@ -85,12 +108,12 @@ export function VideoTimeline({
   onAISuggestionActivate,
   onTimelineItemSelect,
   onZoomChange,
+  onTrimCommit,
 }: VideoTimelineProps) {
   const scrollViewportRef = useRef<HTMLDivElement | null>(null)
   const pendingPlayheadOffsetRef = useRef<number | null>(null)
   const aiSuggestionsRef = useRef(aiSuggestions)
   const onSeekRef = useRef(onSeek)
-  const safeDurationRef = useRef(0)
   const isScrubbingRef = useRef(false)
   const safeDuration = Math.max(duration || item.metadata?.duration || 0, 0)
   const clampedCurrentTime = clampTime(currentTime, safeDuration)
@@ -108,7 +131,6 @@ export function VideoTimeline({
   useEffect(() => {
     aiSuggestionsRef.current = aiSuggestions
     onSeekRef.current = onSeek
-    safeDurationRef.current = safeDuration
   })
 
   useLayoutEffect(() => {
@@ -134,20 +156,26 @@ export function VideoTimeline({
     )
 
     if (activeSuggestion) {
-      onSeekRef.current(clampTime(activeSuggestion.start, safeDurationRef.current))
+      onSeekRef.current(
+        normalizePlaybackTime(computedClip, activeSuggestion.start).time,
+      )
     }
-  }, [activeAISuggestionId])
+  }, [activeAISuggestionId, computedClip])
 
   const handleSeekFromClientX = (clientX: number, element: HTMLElement) => {
     const rect = element.getBoundingClientRect()
     const timestamp = rect.width > 0
       ? (clientX - rect.left) / pixelsPerSecond
       : 0
-    onSeek(clampTime(timestamp, safeDuration))
+    onSeek(normalizePlaybackTime(computedClip, timestamp).time)
   }
 
   const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
-    if (event.button !== 0 || isTimelineItemTarget(event.target)) {
+    if (
+      event.button !== 0 ||
+      isTimelineItemTarget(event.target) ||
+      isTrimHandleTarget(event.target)
+    ) {
       return
     }
 
@@ -185,7 +213,12 @@ export function VideoTimeline({
 
     event.preventDefault()
     const direction = event.key === 'ArrowRight' ? 1 : -1
-    onSeek(clampTime(clampedCurrentTime + direction * KEYBOARD_SEEK_SECONDS, safeDuration))
+    onSeek(
+      normalizePlaybackTime(
+        computedClip,
+        clampedCurrentTime + direction * KEYBOARD_SEEK_SECONDS,
+      ).time,
+    )
   }
 
   const handleItemSelect = (timelineItem: TimelineItemModel) => {
@@ -193,7 +226,7 @@ export function VideoTimeline({
     if (timelineItem.aiSuggestion) {
       onAISuggestionActivate(timelineItem.aiSuggestion.id)
     }
-    onSeek(clampTime(timelineItem.start, safeDuration))
+    onSeek(normalizePlaybackTime(computedClip, timelineItem.start).time)
   }
 
   const handleZoomChange = (nextZoom: TimelineZoom) => {
@@ -255,15 +288,18 @@ export function VideoTimeline({
                   key={track.id}
                   track={track}
                   pixelsPerSecond={pixelsPerSecond}
+                  duration={safeDuration}
+                  computedClip={computedClip}
                   selectedItemId={selectedTimelineItemId}
                   selectedAISuggestionIds={selectedAISuggestionIds}
                   activeAISuggestionId={activeAISuggestionId}
                   onItemSelect={handleItemSelect}
+                  onTrimCommit={onTrimCommit}
                 />
               ))}
             </div>
             <TimelineDeleteOverlays
-              deleteOperations={deleteOperations}
+              deletedRanges={computedClip?.deletedRanges ?? []}
               pixelsPerSecond={pixelsPerSecond}
             />
             <TimelinePlayhead
@@ -278,22 +314,22 @@ export function VideoTimeline({
 }
 
 function TimelineDeleteOverlays({
-  deleteOperations,
+  deletedRanges,
   pixelsPerSecond,
 }: {
-  deleteOperations: DeleteOperation[]
+  deletedRanges: DeleteRange[]
   pixelsPerSecond: number
 }) {
   return (
     <div className="timeline-delete-overlay-layer" aria-hidden="true">
-      {deleteOperations.map((operation) => (
+      {deletedRanges.map((range) => (
         <span
-          key={operation.id}
+          key={range.operationId}
           className="timeline-delete-overlay"
           style={{
-            left: `${operation.startTime * pixelsPerSecond}px`,
+            left: `${range.start * pixelsPerSecond}px`,
             width: `${Math.max(
-              (operation.endTime - operation.startTime) * pixelsPerSecond,
+              (range.end - range.start) * pixelsPerSecond,
               4,
             )}px`,
           }}
@@ -305,6 +341,10 @@ function TimelineDeleteOverlays({
 
 function isTimelineItemTarget(target: EventTarget) {
   return target instanceof Element && Boolean(target.closest('.timeline-item'))
+}
+
+function isTrimHandleTarget(target: EventTarget) {
+  return target instanceof Element && Boolean(target.closest('.timeline-trim-handle'))
 }
 
 function TimelineHeader({
@@ -368,10 +408,13 @@ function TimelinePlayhead({ currentTime, pixelsPerSecond }: TimelinePlayheadProp
 function TimelineTrack({
   track,
   pixelsPerSecond,
+  duration,
+  computedClip,
   selectedItemId,
   selectedAISuggestionIds,
   activeAISuggestionId,
   onItemSelect,
+  onTrimCommit,
 }: TimelineTrackProps) {
   return (
     <div
@@ -380,7 +423,16 @@ function TimelineTrack({
       aria-label={track.label}
     >
       <div className="timeline-track-lane">
-        {track.id === 'video' ? <span className="timeline-video-strip" /> : null}
+        {track.id === 'video' ? (
+          computedClip ? (
+            <TimelineVideoStrip
+              computedClip={computedClip}
+              duration={duration}
+              pixelsPerSecond={pixelsPerSecond}
+              onTrimCommit={onTrimCommit}
+            />
+          ) : null
+        ) : null}
         {track.items.length ? (
           track.items.map((item) => (
             <button
@@ -414,6 +466,165 @@ function TimelineTrack({
         )}
       </div>
     </div>
+  )
+}
+
+function TimelineVideoStrip({
+  computedClip,
+  duration,
+  pixelsPerSecond,
+  onTrimCommit,
+}: {
+  computedClip: ComputedClip
+  duration: number
+  pixelsPerSecond: number
+  onTrimCommit: (
+    clipId: string,
+    trimStart: number,
+    trimEnd: number,
+    sourceDuration: number,
+  ) => void
+}) {
+  const [previewTrim, setPreviewTrim] = useState<ClipTrimRange | null>(null)
+  const trimRange = {
+    trimStart: computedClip.visibleStart,
+    trimEnd: computedClip.visibleEnd,
+  }
+  const activeTrim = previewTrim ?? trimRange
+  const previewTrimRef = useRef<ClipTrimRange | null>(null)
+  const dragStateRef = useRef<{
+    edge: 'start' | 'end'
+    pointerId: number
+  } | null>(null)
+
+  useEffect(() => {
+    setPreviewTrim(null)
+    previewTrimRef.current = null
+  }, [trimRange.trimStart, trimRange.trimEnd])
+
+  const getPreviewTrim = (
+    clientX: number,
+    element: HTMLElement,
+    edge: 'start' | 'end',
+  ) => {
+    const rect = element.getBoundingClientRect()
+    const timestamp = rect.width > 0
+      ? (clientX - rect.left) / pixelsPerSecond
+      : 0
+    const currentTrim = previewTrimRef.current ?? trimRange
+
+    return edge === 'start'
+      ? normalizeTrimRange(timestamp, currentTrim.trimEnd, computedClip.sourceDuration || duration)
+      : normalizeTrimRange(currentTrim.trimStart, timestamp, computedClip.sourceDuration || duration)
+  }
+
+  const updatePreviewTrim = (
+    clientX: number,
+    element: HTMLElement,
+    edge: 'start' | 'end',
+  ) => {
+    const nextTrim = getPreviewTrim(clientX, element, edge)
+
+    previewTrimRef.current = nextTrim
+    setPreviewTrim(nextTrim)
+  }
+
+  const getTrimCoordinateElement = (target: HTMLElement) =>
+    target.closest<HTMLElement>('.timeline-track-lane') ?? target
+
+  const handleTrimPointerDown = (
+    event: PointerEvent<HTMLSpanElement>,
+    edge: 'start' | 'end',
+  ) => {
+    event.preventDefault()
+    event.stopPropagation()
+    dragStateRef.current = {
+      edge,
+      pointerId: event.pointerId,
+    }
+    event.currentTarget.setPointerCapture(event.pointerId)
+    updatePreviewTrim(event.clientX, getTrimCoordinateElement(event.currentTarget), edge)
+  }
+
+  const handleTrimPointerMove = (event: PointerEvent<HTMLSpanElement>) => {
+    const dragState = dragStateRef.current
+
+    if (!dragState || dragState.pointerId !== event.pointerId) {
+      return
+    }
+
+    event.preventDefault()
+    event.stopPropagation()
+    updatePreviewTrim(
+      event.clientX,
+      getTrimCoordinateElement(event.currentTarget),
+      dragState.edge,
+    )
+  }
+
+  const stopTrimDrag = (event: PointerEvent<HTMLSpanElement>) => {
+    const dragState = dragStateRef.current
+
+    if (!dragState || dragState.pointerId !== event.pointerId) {
+      return
+    }
+
+    event.preventDefault()
+    event.stopPropagation()
+    dragStateRef.current = null
+
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+
+    const finalTrim = previewTrimRef.current ?? previewTrim ?? trimRange
+
+    if (
+      Math.abs(finalTrim.trimStart - trimRange.trimStart) >= minimumTrimDuration / 2 ||
+      Math.abs(finalTrim.trimEnd - trimRange.trimEnd) >= minimumTrimDuration / 2
+    ) {
+      onTrimCommit(
+        computedClip.clipId,
+        finalTrim.trimStart,
+        finalTrim.trimEnd,
+        computedClip.sourceDuration || duration,
+      )
+    }
+
+    setPreviewTrim(null)
+    previewTrimRef.current = null
+  }
+
+  return (
+    <span
+      className="timeline-video-strip"
+      style={{
+        left: `${activeTrim.trimStart * pixelsPerSecond}px`,
+        width: `${Math.max(
+          (activeTrim.trimEnd - activeTrim.trimStart) * pixelsPerSecond,
+          4,
+        )}px`,
+      }}
+    >
+      <span
+        className="timeline-trim-handle timeline-trim-handle-left"
+        role="separator"
+        aria-label="Trim clip start"
+        onPointerDown={(event) => handleTrimPointerDown(event, 'start')}
+        onPointerMove={handleTrimPointerMove}
+        onPointerUp={stopTrimDrag}
+        onPointerCancel={stopTrimDrag}
+      />
+      <span
+        className="timeline-trim-handle timeline-trim-handle-right"
+        role="separator"
+        aria-label="Trim clip end"
+        onPointerDown={(event) => handleTrimPointerDown(event, 'end')}
+        onPointerMove={handleTrimPointerMove}
+        onPointerUp={stopTrimDrag}
+        onPointerCancel={stopTrimDrag}
+      />
+    </span>
   )
 }
 

@@ -7,14 +7,22 @@ import type {
   EditOperation,
   EditOperationGroup,
   ReviewDecisionOperation,
+  TrimOperation,
 } from '../models/EditOperation'
 import {
   defaultProjectState,
-  primaryVideoClipId,
-  primaryVideoTrackId,
   ProjectContext,
 } from './ProjectState'
 import type { CentralProjectState } from './ProjectState'
+import {
+  getFirstEnabledClip,
+  getSuggestionReviewStatus,
+  normalizeTrimRange,
+} from '../selectors/editSelectors'
+import {
+  createOperationId,
+  createOperationTimestamp,
+} from '../utils/operationIds'
 
 type ProjectProviderProps = {
   children: ReactNode
@@ -71,26 +79,25 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
     const suggestionIdSet = new Set(suggestionIds)
 
     setProjectState((currentState) => {
-      const now = new Date().toISOString()
+      const createdAt = createOperationTimestamp()
+      const primaryClip = getFirstEnabledClip(currentState.project)
       const newOperations: DeleteOperation[] = status === 'accepted'
         ? currentState.project.suggestions
             .filter((suggestion) => suggestionIdSet.has(suggestion.id))
+            .filter(() => Boolean(primaryClip))
             .filter(
               (suggestion) =>
-                !currentState.project.operations.some(
-                  (operation) =>
-                    operation.type === 'review-decision' &&
-                    operation.suggestionId === suggestion.id,
-                ),
+                getSuggestionReviewStatus(currentState.project, suggestion.id) ===
+                'pending',
             )
             .map((suggestion) => ({
-              id: `delete-${suggestion.id}`,
+              id: createOperationId('delete'),
               type: 'delete',
-              trackId: primaryVideoTrackId,
-              clipId: primaryVideoClipId,
+              trackId: primaryClip?.trackId ?? '',
+              clipId: primaryClip?.id ?? '',
               startTime: suggestion.start,
               endTime: suggestion.end,
-              createdAt: now,
+              createdAt,
             }))
         : []
       const reviewDecisionOperations: ReviewDecisionOperation[] =
@@ -98,24 +105,19 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
           .filter((suggestion) => suggestionIdSet.has(suggestion.id))
           .filter(
             (suggestion) =>
-              !currentState.project.operations.some(
-                (operation) =>
-                  operation.type === 'review-decision' &&
-                  operation.suggestionId === suggestion.id,
-              ),
+              getSuggestionReviewStatus(currentState.project, suggestion.id) ===
+              'pending',
           )
           .map((suggestion) => ({
-            id: `review-decision-${suggestion.id}-${status}`,
+            id: createOperationId('review-decision'),
             type: 'review-decision',
             suggestionId: suggestion.id,
             decision: status === 'accepted' ? 'accepted' : 'rejected',
-            createdAt: now,
+            createdAt,
           }))
       const operationGroup: EditOperationGroup | null = reviewDecisionOperations.length
         ? {
-            actionId: `review-action-${now}-${reviewDecisionOperations
-              .map((operation) => operation.suggestionId)
-              .join('-')}`,
+            actionId: createOperationId('review-action'),
             operations: [...newOperations, ...reviewDecisionOperations],
           }
         : null
@@ -141,7 +143,7 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
               ? operationState.redoStack
               : currentState.project.history.redoStack,
           },
-          updatedAt: new Date().toISOString(),
+          updatedAt: createOperationTimestamp(),
         },
       }
     })
@@ -181,9 +183,54 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
       outputSettings: settings,
       project: {
         ...currentState.project,
-        updatedAt: new Date().toISOString(),
+        updatedAt: createOperationTimestamp(),
       },
     }))
+  }, [])
+
+  const applyTrimOperation = useCallback((
+    clipId: string,
+    trimStart: number,
+    trimEnd: number,
+    sourceDuration: number,
+  ) => {
+    setProjectState((currentState) => {
+      const normalizedRange = normalizeTrimRange(trimStart, trimEnd, sourceDuration)
+      const createdAt = createOperationTimestamp()
+      const trimOperation: TrimOperation = {
+        id: createOperationId('trim'),
+        type: 'trim',
+        clipId,
+        trimStart: normalizedRange.trimStart,
+        trimEnd: normalizedRange.trimEnd,
+        createdAt,
+      }
+      const operationGroup: EditOperationGroup = {
+        actionId: createOperationId('trim-action'),
+        operations: [trimOperation],
+      }
+      const operationState = applyOperationGroup(
+        currentState.project.operations,
+        operationGroup,
+      )
+
+      return {
+        ...currentState,
+        project: {
+          ...currentState.project,
+          operations: operationState.operations,
+          history: {
+            ...currentState.project.history,
+            undoStack: [
+              ...currentState.project.history.undoStack,
+              ...operationState.undoStack,
+            ],
+            redoStack: operationState.redoStack,
+          },
+          updatedAt: createdAt,
+        },
+      }
+    })
   }, [])
 
   const undo = useCallback(() => {
@@ -207,7 +254,7 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
             undoStack: currentState.project.history.undoStack.slice(0, -1),
             redoStack: [...currentState.project.history.redoStack, operation],
           },
-          updatedAt: new Date().toISOString(),
+          updatedAt: createOperationTimestamp(),
         },
       }
     })
@@ -239,7 +286,7 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
             undoStack: [...currentState.project.history.undoStack, operation],
             redoStack: currentState.project.history.redoStack.slice(0, -1),
           },
-          updatedAt: new Date().toISOString(),
+          updatedAt: createOperationTimestamp(),
         },
       }
     })
@@ -261,6 +308,7 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
       setPlaybackPosition,
       setTimelineZoom,
       setOutputSettings,
+      applyTrimOperation,
       undo,
       redo,
     }),
@@ -275,6 +323,7 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
       setPlaybackPosition,
       setTimelineZoom,
       setOutputSettings,
+      applyTrimOperation,
       undo,
       redo,
     ],
