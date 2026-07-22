@@ -1,5 +1,14 @@
 import type { Clip } from '../models/Clip'
 import type { Project } from '../models/Project'
+import {
+  playbackTime,
+  sourceTime,
+  timelineTime,
+  type PlaybackTime,
+  type SourceTime,
+  type TimelineTime,
+  type TimeRange,
+} from '../models/Time'
 import type { TimelineItem } from '../models/Track'
 import {
   getDeleteOperations,
@@ -7,17 +16,20 @@ import {
   getTrimOperations,
   normalizeTrimRange,
 } from './editSelectors'
+import {
+  createTimelineTimeMapping,
+  timelineRangeToSource,
+  timelineToPlayback,
+  type TimelineTimeMapping,
+} from './timeMapping'
 
 export type DeleteRange = {
   operationId: string
-  start: number
-  end: number
+  start: TimelineTime
+  end: TimelineTime
 }
 
-export type PlaybackRange = {
-  start: number
-  end: number
-}
+export type PlaybackRange = TimeRange<PlaybackTime>
 
 export interface ComputedClip {
   id: string
@@ -25,6 +37,9 @@ export interface ComputedClip {
   sourceClipId: string
   trackId: string
   sourceDuration: number
+  sourceRange: TimeRange<SourceTime>
+  timelineRange: TimeRange<TimelineTime>
+  timeMapping: TimelineTimeMapping
   segmentStart: number
   segmentEnd: number
   visibleStart: number
@@ -40,7 +55,7 @@ export interface EditProjection {
 }
 
 export type NormalizedPlaybackTime = {
-  time: number
+  time: PlaybackTime
   isPlayable: boolean
 }
 
@@ -114,7 +129,7 @@ export function normalizePlaybackTime(
 
   if (!computedClips.length) {
     return {
-      time: safeRequestedTime,
+      time: playbackTime(safeRequestedTime),
       isPlayable: true,
     }
   }
@@ -137,7 +152,7 @@ export function normalizePlaybackTime(
 
   if (!playbackRanges.length) {
     return {
-      time: visibleStart,
+      time: playbackTime(visibleStart),
       isPlayable: false,
     }
   }
@@ -152,22 +167,23 @@ export function normalizePlaybackTime(
 
   if (activePlaybackRange) {
     return {
-      time: clippedTime,
+      time: playbackTime(clippedTime),
       isPlayable: true,
     }
   }
 
-  const nextPlaybackRange = playbackRanges.find(
-    (range) => range.start > clippedTime,
+  const playbackProjection = timelineToPlayback(
+    timelineTime(clippedTime),
+    playbackRanges.map((range) => ({
+      start: timelineTime(range.start),
+      end: timelineTime(range.end),
+    })),
   )
 
-  return nextPlaybackRange
-    ? {
-        time: nextPlaybackRange.start,
-        isPlayable: true,
-      }
+  return playbackProjection.isPlayable
+    ? playbackProjection
     : {
-        time: visibleEnd,
+        time: playbackTime(visibleEnd),
         isPlayable: false,
       }
 }
@@ -215,30 +231,39 @@ function buildProjectedTimelineItems(
         return [timelineItem]
       }
 
-        return [
-          {
-            ...timelineItem,
-            id: operation.leftTimelineItemId,
-            end: operation.splitTime,
-            ancestorTimelineItemIds: [
-              ...timelineItem.ancestorTimelineItemIds,
-              operation.leftTimelineItemId,
-            ],
-          },
-          {
-            ...timelineItem,
-            id: operation.rightTimelineItemId,
-            start: operation.splitTime,
-            ancestorTimelineItemIds: [
-              ...timelineItem.ancestorTimelineItemIds,
-              operation.rightTimelineItemId,
-            ],
-          },
-        ]
+      return splitTimelineItem(timelineItem, operation)
     })
   }
 
   return timelineItems
+}
+
+function splitTimelineItem(
+  timelineItem: ProjectedTimelineItem,
+  operation: ReturnType<typeof getSplitOperations>[number],
+): ProjectedTimelineItem[] {
+  const leftTimelineItem: ProjectedTimelineItem = {
+    ...timelineItem,
+    id: operation.leftTimelineItemId,
+    end: operation.splitTime,
+    ancestorTimelineItemIds: [
+      ...timelineItem.ancestorTimelineItemIds,
+      operation.leftTimelineItemId,
+    ],
+  }
+  const rightTimelineItem: ProjectedTimelineItem = {
+    ...timelineItem,
+    id: operation.rightTimelineItemId,
+    start: operation.splitTime,
+    ancestorTimelineItemIds: [
+      ...timelineItem.ancestorTimelineItemIds,
+      operation.rightTimelineItemId,
+    ],
+  }
+
+  return leftTimelineItem.end === rightTimelineItem.start
+    ? [leftTimelineItem, rightTimelineItem]
+    : [timelineItem]
 }
 
 function computeTimelineItemProjection(
@@ -258,8 +283,8 @@ function computeTimelineItemProjection(
         timelineItem,
       )
     : {
-        start: timelineItem.start,
-        end: timelineItem.end,
+        start: timelineTime(timelineItem.start),
+        end: timelineTime(timelineItem.end),
       }
   const deletedRanges = timelineItem.ancestorTimelineItemIds
     .flatMap((timelineItemId) => (
@@ -267,16 +292,22 @@ function computeTimelineItemProjection(
     ))
     .map((operation) => ({
       operationId: operation.id,
-      start: Math.max(operation.startTime, visibleRange.start),
-      end: Math.min(operation.endTime, visibleRange.end),
+      start: timelineTime(Math.max(operation.startTime, visibleRange.start)),
+      end: timelineTime(Math.min(operation.endTime, visibleRange.end)),
     }))
     .filter((range) => range.start < range.end)
     .sort((left, right) => left.start - right.start)
-  const playbackRanges = subtractDeletedRanges(
+  const timeMapping = createTimelineTimeMapping(
     {
-      start: visibleRange.start,
-      end: visibleRange.end,
+      start: sourceTime(timelineItem.start),
+      end: sourceTime(timelineItem.end),
     },
+    timelineTime(timelineItem.start),
+  )
+  const timelineRange = visibleRange
+  const sourceRange = timelineRangeToSource(timelineRange, timeMapping)
+  const playbackRanges = subtractDeletedRanges(
+    timelineRange,
     deletedRanges,
   )
 
@@ -286,6 +317,9 @@ function computeTimelineItemProjection(
     sourceClipId: sourceClip.id,
     trackId: timelineItem.trackId,
     sourceDuration,
+    sourceRange,
+    timelineRange,
+    timeMapping,
     segmentStart: timelineItem.start,
     segmentEnd: timelineItem.end,
     visibleStart: visibleRange.start,
@@ -300,7 +334,7 @@ function normalizeSegmentTrimRange(
   trimStart: number,
   trimEnd: number,
   segmentRange: { start: number; end: number },
-): PlaybackRange {
+): TimeRange<TimelineTime> {
   const trimRange = normalizeTrimRange(
     trimStart,
     trimEnd,
@@ -316,8 +350,14 @@ function normalizeSegmentTrimRange(
   )
 
   return start < end
-    ? { start, end }
-    : segmentRange
+    ? {
+        start: timelineTime(start),
+        end: timelineTime(end),
+      }
+    : {
+        start: timelineTime(segmentRange.start),
+        end: timelineTime(segmentRange.end),
+      }
 }
 
 function getClipSourceDuration(clip: Clip, durationOverride?: number) {
@@ -329,7 +369,7 @@ function getClipSourceDuration(clip: Clip, durationOverride?: number) {
 }
 
 function subtractDeletedRanges(
-  visibleRange: PlaybackRange,
+  visibleRange: TimeRange<TimelineTime>,
   deletedRanges: DeleteRange[],
 ): PlaybackRange[] {
   const mergedDeletedRanges = mergeRanges(deletedRanges)
@@ -339,25 +379,27 @@ function subtractDeletedRanges(
   for (const range of mergedDeletedRanges) {
     if (range.start > cursor) {
       playbackRanges.push({
-        start: cursor,
-        end: range.start,
+        start: playbackTime(cursor),
+        end: playbackTime(range.start),
       })
     }
-    cursor = Math.max(cursor, range.end)
+    cursor = timelineTime(Math.max(cursor, range.end))
   }
 
   if (cursor < visibleRange.end) {
     playbackRanges.push({
-      start: cursor,
-      end: visibleRange.end,
+      start: playbackTime(cursor),
+      end: playbackTime(visibleRange.end),
     })
   }
 
   return playbackRanges
 }
 
-function mergeRanges(ranges: DeleteRange[]): DeleteRange[] {
-  const mergedRanges: DeleteRange[] = []
+function mergeRanges<TTime extends number, TRange extends TimeRange<TTime>>(
+  ranges: TRange[],
+): TRange[] {
+  const mergedRanges: TRange[] = []
 
   for (const range of ranges) {
     const previousRange = mergedRanges.at(-1)
@@ -367,7 +409,7 @@ function mergeRanges(ranges: DeleteRange[]): DeleteRange[] {
       continue
     }
 
-    previousRange.end = Math.max(previousRange.end, range.end)
+    previousRange.end = Math.max(previousRange.end, range.end) as TTime
   }
 
   return mergedRanges

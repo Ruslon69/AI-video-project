@@ -1116,11 +1116,32 @@ textarea:focus-visible {
 .timeline-zoom {
   display: inline-flex;
   flex: 0 0 auto;
+  align-items: center;
   gap: 2px;
   border: 1px solid var(--border);
   border-radius: 7px;
   padding: 3px;
   background: var(--surface-soft);
+}
+
+.timeline-action-button {
+  min-height: 28px;
+  border: 1px solid var(--accent);
+  border-radius: 5px;
+  padding: 0 9px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.timeline-action-button:disabled {
+  border-color: transparent;
+  color: var(--text-muted);
+  background: transparent;
+  cursor: not-allowed;
 }
 
 .timeline-zoom-button {

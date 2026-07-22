@@ -25,6 +25,8 @@ import { statusLabels } from '../../utils/projectState'
 import { VideoTimeline } from '../timeline/VideoTimeline'
 import type { TimelineZoom } from '../timeline/timelineConstants'
 
+const PLAYHEAD_UPDATE_EPSILON_SECONDS = 1 / 60
+
 type VideoWorkspaceProps = {
   activeItem: MediaItem | null
   outputSettings: ProjectOutputSettings
@@ -70,12 +72,6 @@ export function VideoWorkspace({
   onTrimCommit,
   onSplitCommit,
 }: VideoWorkspaceProps) {
-  const splitTargetClip = computedClips.find(
-    (clip) =>
-      playbackPosition > clip.visibleStart &&
-      playbackPosition < clip.visibleEnd,
-  ) ?? null
-
   return (
     <section className="video-workspace" aria-label="Видеоплеер">
       <div className="workspace-toolbar">
@@ -103,16 +99,8 @@ export function VideoWorkspace({
         onPlaybackPositionChange={onPlaybackPositionChange}
         onTimelineZoomChange={onTimelineZoomChange}
         onTrimCommit={onTrimCommit}
+        onSplitCommit={onSplitCommit}
       />
-      {splitTargetClip ? (
-        <button
-          type="button"
-          className="secondary-button"
-          onClick={() => onSplitCommit(splitTargetClip.timelineItemId, playbackPosition)}
-        >
-          Split
-        </button>
-      ) : null}
       <p className="workspace-file">
         Активный подэтап: {selectedSubstage.title}
       </p>
@@ -139,6 +127,7 @@ function MediaPreview({
   onPlaybackPositionChange,
   onTimelineZoomChange,
   onTrimCommit,
+  onSplitCommit,
 }: {
   item: MediaItem | null
   aiSuggestions: AISuggestion[]
@@ -159,11 +148,20 @@ function MediaPreview({
     trimEnd: number,
     sourceDuration: number,
   ) => void
+  onSplitCommit: (timelineItemId: string, splitTime: number) => void
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const animationFrameRef = useRef<number | null>(null)
+  const computedClipsRef = useRef(computedClips)
+  const playbackPositionRef = useRef(playbackPosition)
   const [videoDuration, setVideoDuration] = useState(0)
-  const firstComputedClip = computedClips[0] ?? null
+  useEffect(() => {
+    computedClipsRef.current = computedClips
+  }, [computedClips])
+
+  useEffect(() => {
+    playbackPositionRef.current = playbackPosition
+  }, [playbackPosition])
 
   const stopPlayheadUpdates = useCallback(() => {
     if (animationFrameRef.current !== null) {
@@ -178,7 +176,7 @@ function MediaPreview({
       return
     }
     const normalizedPlaybackTime = normalizePlaybackTime(
-      computedClips,
+      computedClipsRef.current,
       video.currentTime,
     )
 
@@ -191,14 +189,14 @@ function MediaPreview({
     }
     onPlaybackPositionChange(normalizedPlaybackTime.time)
     setVideoDuration(Number.isFinite(video.duration) ? video.duration : 0)
-  }, [computedClips, onPlaybackPositionChange, stopPlayheadUpdates])
+  }, [onPlaybackPositionChange, stopPlayheadUpdates])
 
   const startPlayheadUpdates = useCallback(() => {
     stopPlayheadUpdates()
     const video = videoRef.current
     const initialPlaybackTime = normalizePlaybackTime(
-      computedClips,
-      video?.currentTime ?? playbackPosition,
+      computedClipsRef.current,
+      video?.currentTime ?? playbackPositionRef.current,
     )
 
     if (!video || !initialPlaybackTime.isPlayable) {
@@ -218,7 +216,7 @@ function MediaPreview({
       }
 
       const nextPlaybackTime = normalizePlaybackTime(
-        computedClips,
+        computedClipsRef.current,
         video.currentTime,
       )
 
@@ -233,14 +231,17 @@ function MediaPreview({
       if (nextPlaybackTime.time !== video.currentTime) {
         video.currentTime = nextPlaybackTime.time
         onPlaybackPositionChange(nextPlaybackTime.time)
-      } else if (Math.abs(playbackPosition - video.currentTime) >= 0.1) {
+      } else if (
+        Math.abs(playbackPositionRef.current - video.currentTime) >=
+          PLAYHEAD_UPDATE_EPSILON_SECONDS
+      ) {
         onPlaybackPositionChange(nextPlaybackTime.time)
       }
       animationFrameRef.current = window.requestAnimationFrame(update)
     }
 
     animationFrameRef.current = window.requestAnimationFrame(update)
-  }, [computedClips, onPlaybackPositionChange, playbackPosition, stopPlayheadUpdates])
+  }, [onPlaybackPositionChange, stopPlayheadUpdates])
 
   const seekVideo = useCallback((timestamp: number) => {
     const video = videoRef.current
@@ -248,7 +249,7 @@ function MediaPreview({
       ? video.duration
       : item?.metadata?.duration ?? 0
     const normalizedPlaybackTime = normalizePlaybackTime(
-      computedClips,
+      computedClipsRef.current,
       Math.min(Math.max(timestamp, 0), Math.max(duration, 0)),
     )
 
@@ -262,7 +263,6 @@ function MediaPreview({
 
     onPlaybackPositionChange(normalizedPlaybackTime.time)
   }, [
-    computedClips,
     item?.metadata?.duration,
     onPlaybackPositionChange,
     stopPlayheadUpdates,
@@ -270,8 +270,9 @@ function MediaPreview({
 
   useEffect(() => {
     stopPlayheadUpdates()
+    const firstComputedClip = computedClipsRef.current[0] ?? null
     const resetPlaybackTime = normalizePlaybackTime(
-      computedClips,
+      computedClipsRef.current,
       firstComputedClip?.visibleStart ?? 0,
     )
 
@@ -286,9 +287,6 @@ function MediaPreview({
 
     return stopPlayheadUpdates
   }, [
-    computedClips,
-    firstComputedClip?.timelineItemId,
-    firstComputedClip?.visibleStart,
     item?.id,
     item?.metadata?.duration,
     onPlaybackPositionChange,
@@ -298,7 +296,7 @@ function MediaPreview({
   useEffect(() => {
     const video = videoRef.current
     const nextPlaybackPosition = normalizePlaybackTime(
-      computedClips,
+      computedClipsRef.current,
       playbackPosition,
     )
 
@@ -321,9 +319,41 @@ function MediaPreview({
     }
     onPlaybackPositionChange(nextPlaybackPosition.time)
   }, [
-    computedClips,
     onPlaybackPositionChange,
     playbackPosition,
+    stopPlayheadUpdates,
+  ])
+
+  useEffect(() => {
+    const video = videoRef.current
+
+    if (!video) {
+      return
+    }
+
+    const normalizedPlaybackTime = normalizePlaybackTime(
+      computedClips,
+      video.currentTime,
+    )
+
+    if (video.currentTime !== normalizedPlaybackTime.time) {
+      video.currentTime = normalizedPlaybackTime.time
+      onPlaybackPositionChange(normalizedPlaybackTime.time)
+    }
+
+    if (!normalizedPlaybackTime.isPlayable) {
+      video.pause()
+      stopPlayheadUpdates()
+      return
+    }
+
+    if (!video.paused && animationFrameRef.current === null) {
+      startPlayheadUpdates()
+    }
+  }, [
+    computedClips,
+    onPlaybackPositionChange,
+    startPlayheadUpdates,
     stopPlayheadUpdates,
   ])
 
@@ -393,6 +423,7 @@ function MediaPreview({
             onTimelineItemSelect={onTimelineItemSelect}
             onZoomChange={onTimelineZoomChange}
             onTrimCommit={onTrimCommit}
+            onSplitCommit={onSplitCommit}
           />
         ) : null}
         <VideoFilmstrip

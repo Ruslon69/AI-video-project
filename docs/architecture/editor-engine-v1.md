@@ -186,6 +186,7 @@ Primary files:
 
 - `editProjection.ts`
 - `editSelectors.ts`
+- `timeMapping.ts`
 
 Projection receives project state and optional runtime duration overrides. It derives:
 
@@ -198,6 +199,56 @@ Projection receives project state and optional runtime duration overrides. It de
 
 Projection is stateless. It owns no editable identity. Deleting every computed object from memory loses no edit data because projection can be rebuilt from project state.
 
+## Time Coordinate Systems
+
+Engine v1 now treats editor time as three explicit coordinate systems.
+
+### Source Time
+
+Source time is time inside the original media asset. It describes where a frame or sample exists in immutable source media.
+
+Examples:
+
+- A video file frame at `12.0s`
+- A source clip range from `0.0s` to `60.0s`
+
+Source time must not imply timeline placement.
+
+### Timeline Time
+
+Timeline time is placement inside the project timeline. It describes where an editable timeline item appears in the sequence.
+
+Examples:
+
+- A timeline item beginning at `10.0s`
+- A split point at `12.0s` inside a timeline item
+
+Timeline time must not imply that the range is playable. Trim and delete operations may remove parts of it from playback.
+
+### Playback Time
+
+Playback time is the effective playable cursor after projection has applied edit operations. Playback time is normalized against visible timeline ranges and deleted ranges.
+
+Examples:
+
+- Seeking into a deleted region resolves to the next playable boundary.
+- A fully deleted visible range produces a stable display boundary but is not playable.
+
+### Mapping Utilities
+
+Time conversion is centralized in `frontend/src/selectors/timeMapping.ts`.
+
+Current utilities include:
+
+- `sourceToTimeline()`
+- `timelineToSource()`
+- `sourceRangeToTimeline()`
+- `timelineRangeToSource()`
+- `timelineToPlayback()`
+- `playbackToTimeline()`
+
+Engine v1 still uses a simple one-to-one source/timeline mapping for the current single-source workflow. The explicit model exists so future move, ripple, speed, nested timeline, and export work can use the same conversion layer instead of reintroducing ambiguous number semantics.
+
 ## ComputedClip
 
 `ComputedClip` is derived output. It is not editable state.
@@ -209,6 +260,9 @@ Current fields include:
 - `sourceClipId`
 - `trackId`
 - `sourceDuration`
+- `sourceRange`
+- `timelineRange`
+- `timeMapping`
 - `segmentStart`
 - `segmentEnd`
 - `visibleStart`

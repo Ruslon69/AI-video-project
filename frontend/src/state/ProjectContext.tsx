@@ -127,7 +127,6 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
 
       return {
         ...currentState,
-        activeSuggestionId: suggestionIds[0] ?? currentState.activeSuggestionId,
         project: {
           ...currentState.project,
           operations: operationState?.operations ?? currentState.project.operations,

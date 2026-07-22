@@ -371,10 +371,7 @@ function AISuggestionsPanel({
                 type="button"
                 className="ghost-button"
                 disabled={suggestion.status !== 'pending'}
-                onClick={() => {
-                  onAccept(suggestion.id)
-                  onActivate(suggestion.id)
-                }}
+                onClick={() => onAccept(suggestion.id)}
               >
                 Accept
               </button>
@@ -382,10 +379,7 @@ function AISuggestionsPanel({
                 type="button"
                 className="ghost-button"
                 disabled={suggestion.status !== 'pending'}
-                onClick={() => {
-                  onReject(suggestion.id)
-                  onActivate(suggestion.id)
-                }}
+                onClick={() => onReject(suggestion.id)}
               >
                 Reject
               </button>

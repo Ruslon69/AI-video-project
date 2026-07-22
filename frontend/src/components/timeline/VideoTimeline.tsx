@@ -50,13 +50,16 @@ type VideoTimelineProps = {
     trimEnd: number,
     sourceDuration: number,
   ) => void
+  onSplitCommit: (timelineItemId: string, splitTime: number) => void
 }
 
 type TimelineHeaderProps = {
   currentTime: number
   duration: number
   zoom: TimelineZoom
+  canSplit: boolean
   onZoomChange: (zoom: TimelineZoom) => void
+  onSplit: () => void
 }
 
 type TimelineRulerProps = {
@@ -109,10 +112,12 @@ export function VideoTimeline({
   onTimelineItemSelect,
   onZoomChange,
   onTrimCommit,
+  onSplitCommit,
 }: VideoTimelineProps) {
   const scrollViewportRef = useRef<HTMLDivElement | null>(null)
   const pendingPlayheadOffsetRef = useRef<number | null>(null)
   const aiSuggestionsRef = useRef(aiSuggestions)
+  const computedClipsRef = useRef(computedClips)
   const onSeekRef = useRef(onSeek)
   const isScrubbingRef = useRef(false)
   const safeDuration = Math.max(duration || item.metadata?.duration || 0, 0)
@@ -127,9 +132,15 @@ export function VideoTimeline({
     () => buildTimelineTracks(item, safeDuration, aiSuggestions),
     [item, safeDuration, aiSuggestions],
   )
+  const splitTargetClip = computedClips.find(
+    (clip) =>
+      clampedCurrentTime > clip.visibleStart &&
+      clampedCurrentTime < clip.visibleEnd,
+  ) ?? null
 
   useEffect(() => {
     aiSuggestionsRef.current = aiSuggestions
+    computedClipsRef.current = computedClips
     onSeekRef.current = onSeek
   })
 
@@ -157,10 +168,13 @@ export function VideoTimeline({
 
     if (activeSuggestion) {
       onSeekRef.current(
-        normalizePlaybackTime(computedClips, activeSuggestion.start).time,
+        normalizePlaybackTime(
+          computedClipsRef.current,
+          activeSuggestion.start,
+        ).time,
       )
     }
-  }, [activeAISuggestionId, computedClips])
+  }, [activeAISuggestionId])
 
   const handleSeekFromClientX = (clientX: number, element: HTMLElement) => {
     const rect = element.getBoundingClientRect()
@@ -250,7 +264,13 @@ export function VideoTimeline({
         currentTime={clampedCurrentTime}
         duration={safeDuration}
         zoom={zoom}
+        canSplit={Boolean(splitTargetClip)}
         onZoomChange={handleZoomChange}
+        onSplit={() => {
+          if (splitTargetClip) {
+            onSplitCommit(splitTargetClip.timelineItemId, clampedCurrentTime)
+          }
+        }}
       />
       <div className="timeline-body">
         <div className="timeline-label-column" aria-hidden="true">
@@ -351,7 +371,9 @@ function TimelineHeader({
   currentTime,
   duration,
   zoom,
+  canSplit,
   onZoomChange,
+  onSplit,
 }: TimelineHeaderProps) {
   return (
     <div className="video-timeline-head">
@@ -362,6 +384,16 @@ function TimelineHeader({
         </span>
       </div>
       <div className="timeline-zoom" aria-label="Масштаб таймлайна">
+        <button
+          type="button"
+          className="timeline-action-button"
+          disabled={!canSplit}
+          onClick={onSplit}
+          aria-label="Split at playhead"
+          title="Split at playhead"
+        >
+          Split
+        </button>
         {TIMELINE_ZOOM_OPTIONS.map((option) => (
           <button
             key={option}
