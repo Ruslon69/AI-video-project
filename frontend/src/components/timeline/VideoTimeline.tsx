@@ -151,9 +151,6 @@ export function VideoTimeline({
           isValidSplitTime(clip, clampedCurrentTime),
       ) ?? null
     : null
-  const splitTargetClip = selectedSplitTargetClip ??
-    computedClips.find((clip) => isValidSplitTime(clip, clampedCurrentTime)) ??
-    null
 
   useLayoutEffect(() => {
     const scrollViewport = scrollViewportRef.current
@@ -191,6 +188,7 @@ export function VideoTimeline({
     }
 
     event.preventDefault()
+    onTimelineItemSelect(null)
     isScrubbingRef.current = true
     event.currentTarget.setPointerCapture(event.pointerId)
     handleSeekFromClientX(event.clientX, event.currentTarget, 'timeline-pointer')
@@ -266,11 +264,14 @@ export function VideoTimeline({
         currentTime={clampedCurrentTime}
         duration={safeDuration}
         zoom={zoom}
-        canSplit={Boolean(splitTargetClip)}
+        canSplit={Boolean(selectedSplitTargetClip)}
         onZoomChange={handleZoomChange}
         onSplit={() => {
-          if (splitTargetClip) {
-            onSplitCommit(splitTargetClip.timelineItemId, clampedCurrentTime)
+          if (selectedSplitTargetClip) {
+            onSplitCommit(
+              selectedSplitTargetClip.timelineItemId,
+              clampedCurrentTime,
+            )
           }
         }}
       />
@@ -681,24 +682,28 @@ function TimelineVideoStrip({
         }
       }}
     >
-      <span
-        className="timeline-trim-handle timeline-trim-handle-left"
-        role="separator"
-        aria-label="Trim clip start"
-        onPointerDown={(event) => handleTrimPointerDown(event, 'start')}
-        onPointerMove={handleTrimPointerMove}
-        onPointerUp={stopTrimDrag}
-        onPointerCancel={stopTrimDrag}
-      />
-      <span
-        className="timeline-trim-handle timeline-trim-handle-right"
-        role="separator"
-        aria-label="Trim clip end"
-        onPointerDown={(event) => handleTrimPointerDown(event, 'end')}
-        onPointerMove={handleTrimPointerMove}
-        onPointerUp={stopTrimDrag}
-        onPointerCancel={stopTrimDrag}
-      />
+      {isSelected ? (
+        <>
+          <span
+            className="timeline-trim-handle timeline-trim-handle-left"
+            role="separator"
+            aria-label="Trim clip start"
+            onPointerDown={(event) => handleTrimPointerDown(event, 'start')}
+            onPointerMove={handleTrimPointerMove}
+            onPointerUp={stopTrimDrag}
+            onPointerCancel={stopTrimDrag}
+          />
+          <span
+            className="timeline-trim-handle timeline-trim-handle-right"
+            role="separator"
+            aria-label="Trim clip end"
+            onPointerDown={(event) => handleTrimPointerDown(event, 'end')}
+            onPointerMove={handleTrimPointerMove}
+            onPointerUp={stopTrimDrag}
+            onPointerCancel={stopTrimDrag}
+          />
+        </>
+      ) : null}
     </span>
   )
 }

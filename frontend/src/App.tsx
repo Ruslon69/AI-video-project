@@ -65,6 +65,7 @@ function App() {
     selectSuggestions,
     updateSuggestionStatuses,
     selectTimelineItem,
+    clearSelection,
     reportPlaybackPosition,
     requestSeek,
     setTimelineZoom,
@@ -72,6 +73,7 @@ function App() {
     setOutputSettings,
     applyTrimOperation,
     applySplitOperation,
+    applyDeleteOperation,
     canUndo,
     canRedo,
     undo,
@@ -127,6 +129,11 @@ function App() {
     [activeSourceClipId, editProjection],
   )
   const activeComputedClip = activeComputedClips[0] ?? getFirstComputedClip(editProjection)
+  const selectedComputedClip = selectedTimelineItemId
+    ? activeComputedClips.find(
+        (clip) => clip.timelineItemId === selectedTimelineItemId,
+      ) ?? editProjection.clipsById[selectedTimelineItemId] ?? null
+    : null
   const reviewSuggestions = useMemo(
     () => getProjectedSuggestions(project),
     [project],
@@ -139,10 +146,29 @@ function App() {
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (isEditableShortcutTarget(event.target)) {
+        return
+      }
+
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        clearSelection()
+        return
+      }
+
+      if (event.key === 'Delete' && selectedComputedClip) {
+        event.preventDefault()
+        applyDeleteOperation(
+          selectedComputedClip.timelineItemId,
+          0,
+          selectedComputedClip.segmentEnd - selectedComputedClip.segmentStart,
+        )
+        return
+      }
+
       if (
         event.key.toLowerCase() !== 'z' ||
-        (!event.metaKey && !event.ctrlKey) ||
-        isEditableShortcutTarget(event.target)
+        (!event.metaKey && !event.ctrlKey)
       ) {
         return
       }
@@ -166,7 +192,15 @@ function App() {
     return () => {
       window.removeEventListener('keydown', handleKeyDown)
     }
-  }, [canRedo, canUndo, redo, undo])
+  }, [
+    applyDeleteOperation,
+    canRedo,
+    canUndo,
+    clearSelection,
+    redo,
+    selectedComputedClip,
+    undo,
+  ])
 
   const handleStageSelect = (stageId: string, substageId?: string) => {
     setProjectState((currentState) => {

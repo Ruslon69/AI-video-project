@@ -20,7 +20,6 @@ import type {
   SeekRequestReason,
 } from './ProjectState'
 import {
-  getFirstEnabledTimelineItem,
   getSuggestionReviewStatus,
   normalizeTrimRange,
 } from '../selectors/editSelectors'
@@ -59,6 +58,13 @@ function createSuggestionSeekRequest(
         reason: 'suggestion-selection' as const,
       }
     : state.seekRequest
+}
+
+function getSelectionState(timelineItemId: string | null) {
+  return {
+    primaryItemId: timelineItemId,
+    selectedItemIds: timelineItemId ? [timelineItemId] : [],
+  }
 }
 
 export function ProjectProvider({ children }: ProjectProviderProps) {
@@ -107,7 +113,10 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
 
     setProjectState((currentState) => {
       const createdAt = createOperationTimestamp()
-      const primaryTimelineItem = getFirstEnabledTimelineItem(currentState.project)
+      const primaryTimelineItemId = currentState.selection.primaryItemId
+      const primaryTimelineItem = currentState.project.timeline.items.find(
+        (timelineItem) => timelineItem.id === primaryTimelineItemId,
+      )
       const newOperations: DeleteOperation[] = status === 'accepted'
         ? currentState.project.suggestions
             .filter((suggestion) => suggestionIdSet.has(suggestion.id))
@@ -179,7 +188,14 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
   const selectTimelineItem = useCallback((timelineItemId: string | null) => {
     setProjectState((currentState) => ({
       ...currentState,
-      selectedTimelineItemId: timelineItemId,
+      selection: getSelectionState(timelineItemId),
+    }))
+  }, [])
+
+  const clearSelection = useCallback(() => {
+    setProjectState((currentState) => ({
+      ...currentState,
+      selection: getSelectionState(null),
     }))
   }, [])
 
@@ -325,6 +341,53 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
     })
   }, [])
 
+  const applyDeleteOperation = useCallback((
+    timelineItemId: string,
+    relativeStart: number,
+    relativeEnd: number,
+  ) => {
+    if (!Number.isFinite(relativeStart) || !Number.isFinite(relativeEnd)) {
+      return
+    }
+
+    setProjectState((currentState) => {
+      const createdAt = createOperationTimestamp()
+      const deleteOperation: DeleteOperation = {
+        id: createOperationId('delete'),
+        type: 'delete',
+        timelineItemId,
+        relativeStart,
+        relativeEnd,
+        createdAt,
+      }
+      const operationGroup: EditOperationGroup = {
+        actionId: createOperationId('delete-action'),
+        operations: [deleteOperation],
+      }
+      const operationState = applyOperationGroup(
+        currentState.project.operations,
+        operationGroup,
+      )
+
+      return {
+        ...currentState,
+        project: {
+          ...currentState.project,
+          operations: operationState.operations,
+          history: {
+            ...currentState.project.history,
+            undoStack: [
+              ...currentState.project.history.undoStack,
+              ...operationState.undoStack,
+            ],
+            redoStack: operationState.redoStack,
+          },
+          updatedAt: createdAt,
+        },
+      }
+    })
+  }, [])
+
   const undo = useCallback(() => {
     setProjectState((currentState) => {
       const operation = currentState.project.history.undoStack.at(-1)
@@ -387,6 +450,7 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
   const value = useMemo(
     () => ({
       ...projectState,
+      selectedTimelineItemId: projectState.selection.primaryItemId,
       undoStack: projectState.project.history.undoStack,
       redoStack: projectState.project.history.redoStack,
       canUndo: projectState.project.history.undoStack.length > 0,
@@ -396,6 +460,7 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
       selectSuggestions,
       updateSuggestionStatuses,
       selectTimelineItem,
+      clearSelection,
       selectClips,
       reportPlaybackPosition,
       requestSeek,
@@ -403,6 +468,7 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
       setOutputSettings,
       applyTrimOperation,
       applySplitOperation,
+      applyDeleteOperation,
       undo,
       redo,
     }),
@@ -413,6 +479,7 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
       selectSuggestions,
       updateSuggestionStatuses,
       selectTimelineItem,
+      clearSelection,
       selectClips,
       reportPlaybackPosition,
       requestSeek,
@@ -420,6 +487,7 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
       setOutputSettings,
       applyTrimOperation,
       applySplitOperation,
+      applyDeleteOperation,
       undo,
       redo,
     ],

@@ -150,12 +150,17 @@ export interface CentralProjectState {
   project: Project
   selectedSuggestionIds: string[]
   activeSuggestionId: string | null
-  selectedTimelineItemId: string | null
+  selection: SelectionState
   selectedClipIds: string[]
   reportedPlaybackPosition: number
   seekRequest: SeekRequest | null
   timelineZoom: TimelineZoom
   outputSettings: ProjectOutputSettings
+}
+
+export type SelectionState = {
+  primaryItemId: string | null
+  selectedItemIds: string[]
 }
 
 export type SeekRequestReason =
@@ -174,6 +179,7 @@ export type SeekRequest = {
 }
 
 export interface ProjectContextValue extends CentralProjectState {
+  selectedTimelineItemId: string | null
   undoStack: EditOperationGroup[]
   redoStack: EditOperationGroup[]
   canUndo: boolean
@@ -186,6 +192,7 @@ export interface ProjectContextValue extends CentralProjectState {
     status: 'accepted' | 'rejected',
   ) => void
   selectTimelineItem: (timelineItemId: string | null) => void
+  clearSelection: () => void
   selectClips: (clipIds: string[]) => void
   reportPlaybackPosition: (timestamp: number) => void
   requestSeek: (
@@ -204,6 +211,11 @@ export interface ProjectContextValue extends CentralProjectState {
     timelineItemId: string,
     splitTime: number,
   ) => void
+  applyDeleteOperation: (
+    timelineItemId: string,
+    relativeStart: number,
+    relativeEnd: number,
+  ) => void
   undo: () => void
   redo: () => void
 }
@@ -214,7 +226,10 @@ export const defaultProjectState: CentralProjectState = {
     ? [defaultProjectSuggestions[0].id]
     : [],
   activeSuggestionId: defaultProjectSuggestions[0]?.id ?? null,
-  selectedTimelineItemId: null,
+  selection: {
+    primaryItemId: null,
+    selectedItemIds: [],
+  },
   selectedClipIds: [],
   reportedPlaybackPosition: 0,
   seekRequest: null,

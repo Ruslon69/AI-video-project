@@ -357,11 +357,38 @@ Undo and redo are stack-based in Engine v1.
 
 Projection always derives from the current `project.operations` array.
 
+## Selection Engine
+
+Selection Engine v1 centralizes timeline item selection in project state.
+
+Current selection shape:
+
+- `primaryItemId`
+- `selectedItemIds`
+
+Only single selection is active in Engine v1, so `selectedItemIds` contains either zero or one item. The array form is intentional preparation for multi-select, grouped clips, move operations, and multi-track editing.
+
+Timeline selection behavior:
+
+- Clicking a clip selects it.
+- Clicking another clip replaces the selection.
+- Clicking empty timeline content clears the selection.
+- `Escape` clears selection.
+
+Edit operation targeting:
+
+- Split operates only on the selected timeline item and is disabled when the playhead is outside that item.
+- Delete creates an item-relative delete operation for the selected timeline item.
+- Trim handles are available only on the selected timeline item.
+
+The editor should not search for the first clip under the playhead as an operation target. The playhead describes time; selection describes edit ownership.
+
 ## Ownership Rules
 
 - Source media owns original media data.
 - Source clips reference media and source ranges.
 - Timeline items own persistent editable timeline identity.
+- Selection owns the current edit target.
 - Operations own edit intent.
 - Operation groups own undo/redo atomicity.
 - Projection owns derived computed state only.
