@@ -57,14 +57,16 @@ function App() {
     selectedSuggestionIds,
     activeSuggestionId,
     selectedTimelineItemId,
-    playbackPosition,
+    reportedPlaybackPosition,
+    seekRequest,
     timelineZoom,
     activateSuggestion,
     toggleSuggestionSelection,
     selectSuggestions,
     updateSuggestionStatuses,
     selectTimelineItem,
-    setPlaybackPosition,
+    reportPlaybackPosition,
+    requestSeek,
     setTimelineZoom,
     outputSettings,
     setOutputSettings,
@@ -259,12 +261,14 @@ function App() {
             selectedAISuggestionIds={selectedSuggestionIds}
             activeAISuggestionId={activeSuggestionId}
             selectedTimelineItemId={selectedTimelineItemId}
-            playbackPosition={playbackPosition}
+            reportedPlaybackPosition={reportedPlaybackPosition}
+            seekRequest={seekRequest}
             timelineZoom={timelineZoom}
 	          onReconnectSource={handleReconnectMediaSource}
             onAISuggestionActivate={activateSuggestion}
             onTimelineItemSelect={selectTimelineItem}
-            onPlaybackPositionChange={setPlaybackPosition}
+            onPlaybackPositionReport={reportPlaybackPosition}
+            onSeekRequest={requestSeek}
             onTimelineZoomChange={setTimelineZoom}
             onTrimCommit={applyTrimOperation}
             onSplitCommit={applySplitOperation}

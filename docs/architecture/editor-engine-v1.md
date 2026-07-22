@@ -20,7 +20,7 @@ The current engine supports:
 The editor is organized around four main layers:
 
 1. **Project State**
-   Stores durable project data, timeline items, source clips, operations, history, selections, playback position, zoom, and output settings.
+   Stores durable project data, timeline items, source clips, operations, history, selections, reported playback position, explicit seek requests, zoom, and output settings.
 
 2. **Operation Log**
    Stores non-destructive edit intent. Operations describe what should happen; they do not mutate source media.
@@ -289,6 +289,26 @@ Normalization handles:
 - No playable content
 
 When no playback range exists, the engine uses the visible start as a stable display boundary and marks the result as not playable. Playback remains paused.
+
+### Playback Publication vs Seek Commands
+
+Engine v1 separates playback state from seek commands.
+
+`reportedPlaybackPosition` is state published by `MediaPreview`. It represents the current normalized timeline/playback position from the native media element. Timeline playhead rendering and time display consume this value. It must not be interpreted as a command to seek the player.
+
+`seekRequest` is an explicit command consumed by `MediaPreview`. Each request has a unique `id`, a `timelineTime`, and a reason. The unique id allows repeated seeks to the same timestamp to be processed as separate commands.
+
+Legitimate seek request reasons are:
+
+- `timeline-pointer`
+- `timeline-keyboard`
+- `timeline-item`
+- `filmstrip`
+- `suggestion-selection`
+- `projection-normalization`
+- `media-change`
+
+`MediaPreview` owns the native `HTMLMediaElement.currentTime` and the requestAnimationFrame playback publication loop. Native `currentTime` may be assigned only from an explicit seek request, internal projection normalization, or media/source changes. Player publications must not feed back into `MediaPreview` as implicit seek requests.
 
 ## Undo/Redo
 

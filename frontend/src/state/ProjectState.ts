@@ -3,6 +3,7 @@ import type { ProjectOutputSettings } from '../types'
 import type { Clip } from '../models/Clip'
 import type { Project, ProjectSuggestion } from '../models/Project'
 import type { Timeline } from '../models/Track'
+import type { TimelineTime } from '../models/Time'
 import type { EditOperationGroup } from '../models/EditOperation'
 import type { TimelineZoom } from '../components/timeline/timelineConstants'
 import { defaultProjectOutputSettings } from '../utils/projectSettings'
@@ -146,9 +147,25 @@ export interface CentralProjectState {
   activeSuggestionId: string | null
   selectedTimelineItemId: string | null
   selectedClipIds: string[]
-  playbackPosition: number
+  reportedPlaybackPosition: number
+  seekRequest: SeekRequest | null
   timelineZoom: TimelineZoom
   outputSettings: ProjectOutputSettings
+}
+
+export type SeekRequestReason =
+  | 'timeline-pointer'
+  | 'timeline-keyboard'
+  | 'timeline-item'
+  | 'filmstrip'
+  | 'suggestion-selection'
+  | 'projection-normalization'
+  | 'media-change'
+
+export type SeekRequest = {
+  id: number
+  timelineTime: TimelineTime
+  reason: SeekRequestReason
 }
 
 export interface ProjectContextValue extends CentralProjectState {
@@ -165,7 +182,11 @@ export interface ProjectContextValue extends CentralProjectState {
   ) => void
   selectTimelineItem: (timelineItemId: string | null) => void
   selectClips: (clipIds: string[]) => void
-  setPlaybackPosition: (timestamp: number) => void
+  reportPlaybackPosition: (timestamp: number) => void
+  requestSeek: (
+    timestamp: number,
+    reason: SeekRequestReason,
+  ) => void
   setTimelineZoom: (zoom: TimelineZoom) => void
   setOutputSettings: (settings: ProjectOutputSettings) => void
   applyTrimOperation: (
@@ -190,7 +211,8 @@ export const defaultProjectState: CentralProjectState = {
   activeSuggestionId: defaultProjectSuggestions[0]?.id ?? null,
   selectedTimelineItemId: null,
   selectedClipIds: [],
-  playbackPosition: 0,
+  reportedPlaybackPosition: 0,
+  seekRequest: null,
   timelineZoom: 100,
   outputSettings: defaultProjectOutputSettings,
 }

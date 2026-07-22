@@ -2,6 +2,7 @@ import { useCallback, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { ProjectOutputSettings } from '../types'
 import type { TimelineZoom } from '../components/timeline/timelineConstants'
+import { timelineTime } from '../models/Time'
 import type {
   DeleteOperation,
   EditOperation,
@@ -14,7 +15,10 @@ import {
   defaultProjectState,
   ProjectContext,
 } from './ProjectState'
-import type { CentralProjectState } from './ProjectState'
+import type {
+  CentralProjectState,
+  SeekRequestReason,
+} from './ProjectState'
 import {
   getFirstEnabledTimelineItem,
   getSuggestionReviewStatus,
@@ -40,6 +44,23 @@ function applyOperationGroup(
   }
 }
 
+function createSuggestionSeekRequest(
+  state: CentralProjectState,
+  suggestionId: string | null,
+) {
+  const suggestion = suggestionId
+    ? state.project.suggestions.find((item) => item.id === suggestionId)
+    : null
+
+  return suggestion
+    ? {
+        id: (state.seekRequest?.id ?? 0) + 1,
+        timelineTime: timelineTime(suggestion.start),
+        reason: 'suggestion-selection' as const,
+      }
+    : state.seekRequest
+}
+
 export function ProjectProvider({ children }: ProjectProviderProps) {
   const [projectState, setProjectState] = useState<CentralProjectState>(
     defaultProjectState,
@@ -47,11 +68,12 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
 
   const activateSuggestion = useCallback((suggestionId: string) => {
     setProjectState((currentState) => ({
-      ...currentState,
-      selectedSuggestionIds: currentState.selectedSuggestionIds.includes(suggestionId)
-        ? currentState.selectedSuggestionIds
-        : [...currentState.selectedSuggestionIds, suggestionId],
-      activeSuggestionId: suggestionId,
+        ...currentState,
+        selectedSuggestionIds: currentState.selectedSuggestionIds.includes(suggestionId)
+          ? currentState.selectedSuggestionIds
+          : [...currentState.selectedSuggestionIds, suggestionId],
+        activeSuggestionId: suggestionId,
+        seekRequest: createSuggestionSeekRequest(currentState, suggestionId),
     }))
   }, [])
 
@@ -62,14 +84,18 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
         ? currentState.selectedSuggestionIds.filter((id) => id !== suggestionId)
         : [...currentState.selectedSuggestionIds, suggestionId],
       activeSuggestionId: suggestionId,
+      seekRequest: createSuggestionSeekRequest(currentState, suggestionId),
     }))
   }, [])
 
   const selectSuggestions = useCallback((suggestionIds: string[]) => {
+    const activeSuggestionId = suggestionIds[0] ?? null
+
     setProjectState((currentState) => ({
       ...currentState,
       selectedSuggestionIds: suggestionIds,
-      activeSuggestionId: suggestionIds[0] ?? null,
+      activeSuggestionId,
+      seekRequest: createSuggestionSeekRequest(currentState, activeSuggestionId),
     }))
   }, [])
 
@@ -162,10 +188,24 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
     }))
   }, [])
 
-  const setPlaybackPosition = useCallback((timestamp: number) => {
+  const reportPlaybackPosition = useCallback((timestamp: number) => {
     setProjectState((currentState) => ({
       ...currentState,
-      playbackPosition: timestamp,
+      reportedPlaybackPosition: timestamp,
+    }))
+  }, [])
+
+  const requestSeek = useCallback((
+    timestamp: number,
+    reason: SeekRequestReason,
+  ) => {
+    setProjectState((currentState) => ({
+      ...currentState,
+      seekRequest: {
+        id: (currentState.seekRequest?.id ?? 0) + 1,
+        timelineTime: timelineTime(timestamp),
+        reason,
+      },
     }))
   }, [])
 
@@ -351,7 +391,8 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
       updateSuggestionStatuses,
       selectTimelineItem,
       selectClips,
-      setPlaybackPosition,
+      reportPlaybackPosition,
+      requestSeek,
       setTimelineZoom,
       setOutputSettings,
       applyTrimOperation,
@@ -367,7 +408,8 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
       updateSuggestionStatuses,
       selectTimelineItem,
       selectClips,
-      setPlaybackPosition,
+      reportPlaybackPosition,
+      requestSeek,
       setTimelineZoom,
       setOutputSettings,
       applyTrimOperation,

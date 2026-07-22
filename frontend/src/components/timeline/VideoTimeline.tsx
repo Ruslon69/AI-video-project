@@ -23,6 +23,7 @@ import type {
   TimelineItem as TimelineItemModel,
   TimelineTrack as TimelineTrackModel,
 } from './timelineTypes'
+import type { SeekRequestReason } from '../../state/ProjectState'
 import {
   BASE_PIXELS_PER_SECOND,
   KEYBOARD_SEEK_SECONDS,
@@ -40,7 +41,10 @@ type VideoTimelineProps = {
   activeAISuggestionId: string | null
   selectedTimelineItemId: string | null
   zoom: TimelineZoom
-  onSeek: (timestamp: number) => void
+  onSeekRequest: (
+    timestamp: number,
+    reason: SeekRequestReason,
+  ) => void
   onAISuggestionActivate: (suggestionId: string) => void
   onTimelineItemSelect: (timelineItemId: string | null) => void
   onZoomChange: (zoom: TimelineZoom) => void
@@ -107,7 +111,7 @@ export function VideoTimeline({
   activeAISuggestionId,
   selectedTimelineItemId,
   zoom,
-  onSeek,
+  onSeekRequest,
   onAISuggestionActivate,
   onTimelineItemSelect,
   onZoomChange,
@@ -116,9 +120,6 @@ export function VideoTimeline({
 }: VideoTimelineProps) {
   const scrollViewportRef = useRef<HTMLDivElement | null>(null)
   const pendingPlayheadOffsetRef = useRef<number | null>(null)
-  const aiSuggestionsRef = useRef(aiSuggestions)
-  const computedClipsRef = useRef(computedClips)
-  const onSeekRef = useRef(onSeek)
   const isScrubbingRef = useRef(false)
   const safeDuration = Math.max(duration || item.metadata?.duration || 0, 0)
   const clampedCurrentTime = clampTime(currentTime, safeDuration)
@@ -138,12 +139,6 @@ export function VideoTimeline({
       clampedCurrentTime < clip.visibleEnd,
   ) ?? null
 
-  useEffect(() => {
-    aiSuggestionsRef.current = aiSuggestions
-    computedClipsRef.current = computedClips
-    onSeekRef.current = onSeek
-  })
-
   useLayoutEffect(() => {
     const scrollViewport = scrollViewportRef.current
     const playheadOffset = pendingPlayheadOffsetRef.current
@@ -157,31 +152,16 @@ export function VideoTimeline({
     pendingPlayheadOffsetRef.current = null
   }, [clampedCurrentTime, pixelsPerSecond, zoom])
 
-  useEffect(() => {
-    if (!activeAISuggestionId) {
-      return
-    }
-
-    const activeSuggestion = aiSuggestionsRef.current.find(
-      (suggestion) => suggestion.id === activeAISuggestionId,
-    )
-
-    if (activeSuggestion) {
-      onSeekRef.current(
-        normalizePlaybackTime(
-          computedClipsRef.current,
-          activeSuggestion.start,
-        ).time,
-      )
-    }
-  }, [activeAISuggestionId])
-
-  const handleSeekFromClientX = (clientX: number, element: HTMLElement) => {
+  const handleSeekFromClientX = (
+    clientX: number,
+    element: HTMLElement,
+    reason: SeekRequestReason,
+  ) => {
     const rect = element.getBoundingClientRect()
     const timestamp = rect.width > 0
       ? (clientX - rect.left) / pixelsPerSecond
       : 0
-    onSeek(normalizePlaybackTime(computedClips, timestamp).time)
+    onSeekRequest(normalizePlaybackTime(computedClips, timestamp).time, reason)
   }
 
   const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
@@ -196,7 +176,7 @@ export function VideoTimeline({
     event.preventDefault()
     isScrubbingRef.current = true
     event.currentTarget.setPointerCapture(event.pointerId)
-    handleSeekFromClientX(event.clientX, event.currentTarget)
+    handleSeekFromClientX(event.clientX, event.currentTarget, 'timeline-pointer')
   }
 
   const handlePointerMove = (event: PointerEvent<HTMLDivElement>) => {
@@ -205,7 +185,7 @@ export function VideoTimeline({
     }
 
     event.preventDefault()
-    handleSeekFromClientX(event.clientX, event.currentTarget)
+    handleSeekFromClientX(event.clientX, event.currentTarget, 'timeline-pointer')
   }
 
   const stopScrubbing = (event: PointerEvent<HTMLDivElement>) => {
@@ -227,11 +207,12 @@ export function VideoTimeline({
 
     event.preventDefault()
     const direction = event.key === 'ArrowRight' ? 1 : -1
-    onSeek(
+    onSeekRequest(
       normalizePlaybackTime(
         computedClips,
         clampedCurrentTime + direction * KEYBOARD_SEEK_SECONDS,
       ).time,
+      'timeline-keyboard',
     )
   }
 
@@ -239,8 +220,12 @@ export function VideoTimeline({
     onTimelineItemSelect(timelineItem.id)
     if (timelineItem.aiSuggestion) {
       onAISuggestionActivate(timelineItem.aiSuggestion.id)
+      return
     }
-    onSeek(normalizePlaybackTime(computedClips, timelineItem.start).time)
+    onSeekRequest(
+      normalizePlaybackTime(computedClips, timelineItem.start).time,
+      'timeline-item',
+    )
   }
 
   const handleZoomChange = (nextZoom: TimelineZoom) => {
