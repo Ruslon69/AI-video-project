@@ -85,17 +85,41 @@ Current source clip data includes:
 
 `TimelineItem` is the persistent editable timeline identity introduced to avoid projection-generated edit targets.
 
-Current shape:
+TimelineItem Schema v2 separates source mapping, timeline placement, and metadata.
 
-- `id`
-- `sourceClipId`
+### Source Model
+
+Source fields describe where content comes from inside immutable source media:
+
+- `sourceId`
+- `sourceStart`
+- `sourceEnd`
+
+Moving a timeline item must not change these fields.
+
+### Timeline Placement Model
+
+Timeline placement fields describe where the item exists in the editor timeline:
+
+- `timelineStart`
+- `timelineDuration`
+
+Future move operations should update only timeline placement. Future ripple operations should update timeline placement for affected downstream items without changing source references.
+
+### Metadata
+
+Timeline item metadata is reserved for editability and organization:
+
 - `trackId`
-- `start`
-- `end`
+- `locked`
+- `muted`
+- `visible`
+- `reviewId`
+- `groupId`
 
 Timeline items belong to project state. They are not `ComputedClip`s.
 
-Split operations create persistent child timeline item IDs. Projection uses those IDs to derive the current visible timeline. Operations target `timelineItemId`, not source clip IDs and not computed projection IDs.
+Split operations create persistent child timeline item IDs. Each child references the same source and receives explicit source and timeline ranges during projection. Projection uses those IDs to derive the current visible timeline. Operations target `timelineItemId`, not source IDs and not computed projection IDs.
 
 ## Operation Log
 
@@ -113,7 +137,7 @@ Current edit operations target persistent `timelineItemId` where applicable.
 
 ### TrimOperation
 
-Trim defines the visible range for a timeline item.
+Trim defines the visible range for a timeline item. In Engine v1 trim operations are stored as timeline-space boundaries and projection derives the corresponding source range from the timeline item's source mapping.
 
 Fields:
 
@@ -151,7 +175,7 @@ Fields:
 - `rightTimelineItemId`
 - `createdAt`
 
-The source media is not duplicated.
+The source media is not duplicated. The left child's source end and timeline end match the right child's source start and timeline start.
 
 ### ReviewDecisionOperation
 

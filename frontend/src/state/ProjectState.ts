@@ -81,10 +81,15 @@ export const defaultProjectTimeline: Timeline = {
   items: [
     {
       id: 'timeline-item-primary-video',
-      sourceClipId: 'clip-primary-video',
       trackId: 'track-video',
-      start: 0,
-      end: 60,
+      sourceId: 'clip-primary-video',
+      sourceStart: 0,
+      sourceEnd: 60,
+      timelineStart: 0,
+      timelineDuration: 60,
+      locked: false,
+      muted: false,
+      visible: true,
     },
   ],
   tracks: [

@@ -104,7 +104,7 @@ function App() {
     () => getFirstEnabledTimelineItem(project),
     [project],
   )
-  const activeSourceClipId = activeTimelineItem?.sourceClipId ?? null
+  const activeSourceClipId = activeTimelineItem?.sourceId ?? null
   const editProjection = useMemo(
     () =>
       buildEditProjection(project, {

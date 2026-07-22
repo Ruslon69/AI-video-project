@@ -67,6 +67,13 @@ interface ProjectedTimelineItem extends TimelineItem {
   ancestorTimelineItemIds: string[]
 }
 
+type TimelineItemRanges = {
+  timelineStart: TimelineTime
+  timelineEnd: TimelineTime
+  sourceStart: SourceTime
+  sourceEnd: SourceTime
+}
+
 export function buildEditProjection(
   project: Project,
   options: EditProjectionOptions = {},
@@ -82,7 +89,7 @@ export function buildEditProjection(
     operationIndex,
   )
   const clips = timelineItems.flatMap((timelineItem) => {
-    const sourceClip = sourceClipsById.get(timelineItem.sourceClipId)
+    const sourceClip = sourceClipsById.get(timelineItem.sourceId)
 
     return sourceClip
       ? [
@@ -225,8 +232,8 @@ function buildProjectedTimelineItems(
     timelineItems = timelineItems.flatMap((timelineItem) => {
       if (
         timelineItem.id !== operation.timelineItemId ||
-        operation.splitTime <= timelineItem.start ||
-        operation.splitTime >= timelineItem.end
+        operation.splitTime <= timelineItem.timelineStart ||
+        operation.splitTime >= getTimelineItemEnd(timelineItem)
       ) {
         return [timelineItem]
       }
@@ -242,10 +249,16 @@ function splitTimelineItem(
   timelineItem: ProjectedTimelineItem,
   operation: ReturnType<typeof getSplitOperations>[number],
 ): ProjectedTimelineItem[] {
+  const timelineItemEnd = getTimelineItemEnd(timelineItem)
+  const sourceSplitTime = getSourceTimeAtTimelineTime(
+    timelineItem,
+    operation.splitTime,
+  )
   const leftTimelineItem: ProjectedTimelineItem = {
     ...timelineItem,
     id: operation.leftTimelineItemId,
-    end: operation.splitTime,
+    sourceEnd: sourceSplitTime,
+    timelineDuration: operation.splitTime - timelineItem.timelineStart,
     ancestorTimelineItemIds: [
       ...timelineItem.ancestorTimelineItemIds,
       operation.leftTimelineItemId,
@@ -254,14 +267,17 @@ function splitTimelineItem(
   const rightTimelineItem: ProjectedTimelineItem = {
     ...timelineItem,
     id: operation.rightTimelineItemId,
-    start: operation.splitTime,
+    sourceStart: sourceSplitTime,
+    timelineStart: operation.splitTime,
+    timelineDuration: timelineItemEnd - operation.splitTime,
     ancestorTimelineItemIds: [
       ...timelineItem.ancestorTimelineItemIds,
       operation.rightTimelineItemId,
     ],
   }
 
-  return leftTimelineItem.end === rightTimelineItem.start
+  return getTimelineItemEnd(leftTimelineItem) === rightTimelineItem.timelineStart &&
+    leftTimelineItem.sourceEnd === rightTimelineItem.sourceStart
     ? [leftTimelineItem, rightTimelineItem]
     : [timelineItem]
 }
@@ -273,6 +289,7 @@ function computeTimelineItemProjection(
   sourceDuration: number,
 ): ComputedClip {
   const ancestorTimelineItemIdSet = new Set(timelineItem.ancestorTimelineItemIds)
+  const itemRanges = getTimelineItemRanges(timelineItem)
   const trimOperation = operationIndex.trimOperations
     .filter((operation) => ancestorTimelineItemIdSet.has(operation.timelineItemId))
     .at(-1)
@@ -280,11 +297,14 @@ function computeTimelineItemProjection(
     ? normalizeSegmentTrimRange(
         trimOperation.trimStart,
         trimOperation.trimEnd,
-        timelineItem,
+        {
+          start: itemRanges.timelineStart,
+          end: itemRanges.timelineEnd,
+        },
       )
     : {
-        start: timelineTime(timelineItem.start),
-        end: timelineTime(timelineItem.end),
+        start: itemRanges.timelineStart,
+        end: itemRanges.timelineEnd,
       }
   const deletedRanges = timelineItem.ancestorTimelineItemIds
     .flatMap((timelineItemId) => (
@@ -299,10 +319,10 @@ function computeTimelineItemProjection(
     .sort((left, right) => left.start - right.start)
   const timeMapping = createTimelineTimeMapping(
     {
-      start: sourceTime(timelineItem.start),
-      end: sourceTime(timelineItem.end),
+      start: itemRanges.sourceStart,
+      end: itemRanges.sourceEnd,
     },
-    timelineTime(timelineItem.start),
+    itemRanges.timelineStart,
   )
   const timelineRange = visibleRange
   const sourceRange = timelineRangeToSource(timelineRange, timeMapping)
@@ -320,8 +340,8 @@ function computeTimelineItemProjection(
     sourceRange,
     timelineRange,
     timeMapping,
-    segmentStart: timelineItem.start,
-    segmentEnd: timelineItem.end,
+    segmentStart: itemRanges.timelineStart,
+    segmentEnd: itemRanges.timelineEnd,
     visibleStart: visibleRange.start,
     visibleEnd: visibleRange.end,
     visibleDuration: visibleRange.end - visibleRange.start,
@@ -333,7 +353,7 @@ function computeTimelineItemProjection(
 function normalizeSegmentTrimRange(
   trimStart: number,
   trimEnd: number,
-  segmentRange: { start: number; end: number },
+  segmentRange: TimeRange<TimelineTime>,
 ): TimeRange<TimelineTime> {
   const trimRange = normalizeTrimRange(
     trimStart,
@@ -355,9 +375,38 @@ function normalizeSegmentTrimRange(
         end: timelineTime(end),
       }
     : {
-        start: timelineTime(segmentRange.start),
-        end: timelineTime(segmentRange.end),
+        start: segmentRange.start,
+        end: segmentRange.end,
       }
+}
+
+function getTimelineItemRanges(timelineItem: TimelineItem): TimelineItemRanges {
+  return {
+    timelineStart: timelineTime(timelineItem.timelineStart),
+    timelineEnd: timelineTime(getTimelineItemEnd(timelineItem)),
+    sourceStart: sourceTime(timelineItem.sourceStart),
+    sourceEnd: sourceTime(timelineItem.sourceEnd),
+  }
+}
+
+function getTimelineItemEnd(timelineItem: TimelineItem) {
+  return timelineItem.timelineStart + timelineItem.timelineDuration
+}
+
+function getSourceTimeAtTimelineTime(
+  timelineItem: TimelineItem,
+  timeline: number,
+) {
+  const timelineOffset = timeline - timelineItem.timelineStart
+  const timelineDuration = Math.max(timelineItem.timelineDuration, 0)
+  const sourceDuration = timelineItem.sourceEnd - timelineItem.sourceStart
+
+  if (timelineDuration <= 0) {
+    return timelineItem.sourceStart
+  }
+
+  return timelineItem.sourceStart +
+    (timelineOffset / timelineDuration) * sourceDuration
 }
 
 function getClipSourceDuration(clip: Clip, durationOverride?: number) {

@@ -69,7 +69,7 @@ export function getFirstEnabledTimelineItem(project: Project): TimelineItem | nu
   return project.timeline.items.find((timelineItem) => {
     const sourceClip = project.timeline.tracks
       .flatMap((track) => track.clips)
-      .find((clip) => clip.id === timelineItem.sourceClipId)
+      .find((clip) => clip.id === timelineItem.sourceId)
 
     return sourceClip?.enabled ?? false
   }) ?? null

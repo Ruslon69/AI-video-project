@@ -68,23 +68,24 @@ type TimelineHeaderProps = {
 
 type TimelineRulerProps = {
   ticks: TimelineTick[]
-  pixelsPerSecond: number
+  geometry: TimelineGeometry
 }
 
 type TimelinePlayheadProps = {
   currentTime: number
-  pixelsPerSecond: number
+  geometry: TimelineGeometry
 }
 
 type TimelineTrackProps = {
   track: TimelineTrackModel
-  pixelsPerSecond: number
+  geometry: TimelineGeometry
   duration: number
   computedClips: ComputedClip[]
   selectedItemId: string | null
   selectedAISuggestionIds: string[]
   activeAISuggestionId: string | null
   onItemSelect: (item: TimelineItemModel) => void
+  onClipSelect: (timelineItemId: string) => void
   onTrimCommit: (
     timelineItemId: string,
     trimStart: number,
@@ -98,6 +99,13 @@ type TimelineTick = {
   timestamp: number
   label?: string
   isMajor: boolean
+}
+
+type TimelineGeometry = {
+  contentWidth: number
+  pixelsPerSecond: number
+  timeToTimelineX: (timestamp: number) => number
+  timelineXToTime: (coordinate: number) => number
 }
 
 // Renders timeline tracks, playhead/ruler controls, and maps media analysis into timeline blocks.
@@ -124,7 +132,10 @@ export function VideoTimeline({
   const safeDuration = Math.max(duration || item.metadata?.duration || 0, 0)
   const clampedCurrentTime = clampTime(currentTime, safeDuration)
   const pixelsPerSecond = getPixelsPerSecond(zoom)
-  const canvasWidth = Math.max(safeDuration * pixelsPerSecond, 1)
+  const geometry = useMemo(
+    () => createTimelineGeometry(safeDuration, pixelsPerSecond),
+    [safeDuration, pixelsPerSecond],
+  )
   const ticks = useMemo(
     () => getTimelineTicks(safeDuration, pixelsPerSecond),
     [safeDuration, pixelsPerSecond],
@@ -133,11 +144,16 @@ export function VideoTimeline({
     () => buildTimelineTracks(item, safeDuration, aiSuggestions),
     [item, safeDuration, aiSuggestions],
   )
-  const splitTargetClip = computedClips.find(
-    (clip) =>
-      clampedCurrentTime > clip.visibleStart &&
-      clampedCurrentTime < clip.visibleEnd,
-  ) ?? null
+  const selectedSplitTargetClip = selectedTimelineItemId
+    ? computedClips.find(
+        (clip) =>
+          clip.timelineItemId === selectedTimelineItemId &&
+          isValidSplitTime(clip, clampedCurrentTime),
+      ) ?? null
+    : null
+  const splitTargetClip = selectedSplitTargetClip ??
+    computedClips.find((clip) => isValidSplitTime(clip, clampedCurrentTime)) ??
+    null
 
   useLayoutEffect(() => {
     const scrollViewport = scrollViewportRef.current
@@ -147,10 +163,11 @@ export function VideoTimeline({
       return
     }
 
-    const nextScrollLeft = clampedCurrentTime * pixelsPerSecond - playheadOffset
+    const nextScrollLeft = geometry.timeToTimelineX(clampedCurrentTime) -
+      playheadOffset
     scrollViewport.scrollLeft = Math.max(nextScrollLeft, 0)
     pendingPlayheadOffsetRef.current = null
-  }, [clampedCurrentTime, pixelsPerSecond, zoom])
+  }, [clampedCurrentTime, geometry, zoom])
 
   const handleSeekFromClientX = (
     clientX: number,
@@ -159,7 +176,7 @@ export function VideoTimeline({
   ) => {
     const rect = element.getBoundingClientRect()
     const timestamp = rect.width > 0
-      ? (clientX - rect.left) / pixelsPerSecond
+      ? geometry.timelineXToTime(clientX - rect.left)
       : 0
     onSeekRequest(normalizePlaybackTime(computedClips, timestamp).time, reason)
   }
@@ -233,7 +250,7 @@ export function VideoTimeline({
 
     if (scrollViewport) {
       pendingPlayheadOffsetRef.current =
-        clampedCurrentTime * pixelsPerSecond - scrollViewport.scrollLeft
+        geometry.timeToTimelineX(clampedCurrentTime) - scrollViewport.scrollLeft
     }
 
     onZoomChange(nextZoom)
@@ -272,7 +289,7 @@ export function VideoTimeline({
         >
           <div
             className="timeline-time-canvas"
-            style={{ width: `${canvasWidth}px` }}
+            style={{ width: `${geometry.contentWidth}px` }}
             role="slider"
             tabIndex={0}
             aria-label="Перемотать видео по таймлайну"
@@ -286,30 +303,34 @@ export function VideoTimeline({
             onPointerCancel={stopScrubbing}
             onKeyDown={handleKeyDown}
           >
-            <TimelineRuler ticks={ticks} pixelsPerSecond={pixelsPerSecond} />
+            <TimelineRuler
+              ticks={ticks}
+              geometry={geometry}
+            />
             <div className="timeline-track-stack">
               {tracks.map((track) => (
                 <TimelineTrack
                   key={track.id}
                   track={track}
-                  pixelsPerSecond={pixelsPerSecond}
+                  geometry={geometry}
                   duration={safeDuration}
                   computedClips={computedClips}
                   selectedItemId={selectedTimelineItemId}
                   selectedAISuggestionIds={selectedAISuggestionIds}
                   activeAISuggestionId={activeAISuggestionId}
                   onItemSelect={handleItemSelect}
+                  onClipSelect={onTimelineItemSelect}
                   onTrimCommit={onTrimCommit}
                 />
               ))}
             </div>
             <TimelineDeleteOverlays
               deletedRanges={computedClips.flatMap((clip) => clip.deletedRanges)}
-              pixelsPerSecond={pixelsPerSecond}
+              geometry={geometry}
             />
             <TimelinePlayhead
               currentTime={clampedCurrentTime}
-              pixelsPerSecond={pixelsPerSecond}
+              geometry={geometry}
             />
           </div>
         </div>
@@ -320,10 +341,10 @@ export function VideoTimeline({
 
 function TimelineDeleteOverlays({
   deletedRanges,
-  pixelsPerSecond,
+  geometry,
 }: {
   deletedRanges: DeleteRange[]
-  pixelsPerSecond: number
+  geometry: TimelineGeometry
 }) {
   return (
     <div className="timeline-delete-overlay-layer" aria-hidden="true">
@@ -332,9 +353,10 @@ function TimelineDeleteOverlays({
           key={range.operationId}
           className="timeline-delete-overlay"
           style={{
-            left: `${range.start * pixelsPerSecond}px`,
+            left: `${geometry.timeToTimelineX(range.start)}px`,
             width: `${Math.max(
-              (range.end - range.start) * pixelsPerSecond,
+              geometry.timeToTimelineX(range.end) -
+                geometry.timeToTimelineX(range.start),
               4,
             )}px`,
           }}
@@ -345,7 +367,8 @@ function TimelineDeleteOverlays({
 }
 
 function isTimelineItemTarget(target: EventTarget) {
-  return target instanceof Element && Boolean(target.closest('.timeline-item'))
+  return target instanceof Element &&
+    Boolean(target.closest('.timeline-item, .timeline-video-strip'))
 }
 
 function isTrimHandleTarget(target: EventTarget) {
@@ -369,16 +392,17 @@ function TimelineHeader({
         </span>
       </div>
       <div className="timeline-zoom" aria-label="Масштаб таймлайна">
-        <button
-          type="button"
-          className="timeline-action-button"
-          disabled={!canSplit}
-          onClick={onSplit}
-          aria-label="Split at playhead"
-          title="Split at playhead"
-        >
-          Split
-        </button>
+        <span className="timeline-action-tooltip" data-tooltip="Split at playhead">
+          <button
+            type="button"
+            className="timeline-action-button"
+            disabled={!canSplit}
+            onClick={onSplit}
+            aria-label="Split at playhead"
+          >
+            Split
+          </button>
+        </span>
         {TIMELINE_ZOOM_OPTIONS.map((option) => (
           <button
             key={option}
@@ -396,14 +420,14 @@ function TimelineHeader({
   )
 }
 
-function TimelineRuler({ ticks, pixelsPerSecond }: TimelineRulerProps) {
+function TimelineRuler({ ticks, geometry }: TimelineRulerProps) {
   return (
     <div className="timeline-ruler" aria-hidden="true">
       {ticks.map((tick) => (
         <span
           key={tick.id}
           className={tick.isMajor ? 'timeline-ruler-tick-major' : 'timeline-ruler-tick-minor'}
-          style={{ left: `${tick.timestamp * pixelsPerSecond}px` }}
+          style={{ left: `${geometry.timeToTimelineX(tick.timestamp)}px` }}
         >
           {tick.label ? <span>{tick.label}</span> : null}
         </span>
@@ -412,11 +436,11 @@ function TimelineRuler({ ticks, pixelsPerSecond }: TimelineRulerProps) {
   )
 }
 
-function TimelinePlayhead({ currentTime, pixelsPerSecond }: TimelinePlayheadProps) {
+function TimelinePlayhead({ currentTime, geometry }: TimelinePlayheadProps) {
   return (
     <span
-      className="timeline-playhead"
-      style={{ left: `${currentTime * pixelsPerSecond}px` }}
+      className="timeline-playhead-line"
+      style={{ left: `${geometry.timeToTimelineX(currentTime)}px` }}
       aria-hidden="true"
     />
   )
@@ -424,13 +448,14 @@ function TimelinePlayhead({ currentTime, pixelsPerSecond }: TimelinePlayheadProp
 
 function TimelineTrack({
   track,
-  pixelsPerSecond,
+  geometry,
   duration,
   computedClips,
   selectedItemId,
   selectedAISuggestionIds,
   activeAISuggestionId,
   onItemSelect,
+  onClipSelect,
   onTrimCommit,
 }: TimelineTrackProps) {
   return (
@@ -447,7 +472,9 @@ function TimelineTrack({
                 key={computedClip.id}
                 computedClip={computedClip}
                 duration={duration}
-                pixelsPerSecond={pixelsPerSecond}
+                geometry={geometry}
+                isSelected={selectedItemId === computedClip.timelineItemId}
+                onSelect={onClipSelect}
                 onTrimCommit={onTrimCommit}
               />
             ))
@@ -468,7 +495,7 @@ function TimelineTrack({
                   : selectedItemId === item.id
               }
               data-active={item.aiSuggestion?.id === activeAISuggestionId}
-              style={getTimelineItemStyle(item, pixelsPerSecond)}
+              style={getTimelineItemStyle(item, geometry)}
               title={getTimelineItemTitle(item)}
               onClick={(event) => {
                 event.stopPropagation()
@@ -492,12 +519,16 @@ function TimelineTrack({
 function TimelineVideoStrip({
   computedClip,
   duration,
-  pixelsPerSecond,
+  geometry,
+  isSelected,
+  onSelect,
   onTrimCommit,
 }: {
   computedClip: ComputedClip
   duration: number
-  pixelsPerSecond: number
+  geometry: TimelineGeometry
+  isSelected: boolean
+  onSelect: (timelineItemId: string) => void
   onTrimCommit: (
     timelineItemId: string,
     trimStart: number,
@@ -529,7 +560,7 @@ function TimelineVideoStrip({
   ) => {
     const rect = element.getBoundingClientRect()
     const timestamp = rect.width > 0
-      ? (clientX - rect.left) / pixelsPerSecond
+      ? geometry.timelineXToTime(clientX - rect.left)
       : 0
     const currentTrim = previewTrimRef.current ?? trimRange
 
@@ -628,12 +659,26 @@ function TimelineVideoStrip({
   return (
     <span
       className="timeline-video-strip"
+      data-selected={isSelected}
+      role="button"
+      tabIndex={0}
       style={{
-        left: `${activeTrim.trimStart * pixelsPerSecond}px`,
+        left: `${geometry.timeToTimelineX(activeTrim.trimStart)}px`,
         width: `${Math.max(
-          (activeTrim.trimEnd - activeTrim.trimStart) * pixelsPerSecond,
+          geometry.timeToTimelineX(activeTrim.trimEnd) -
+            geometry.timeToTimelineX(activeTrim.trimStart),
           4,
         )}px`,
+      }}
+      onClick={(event) => {
+        event.stopPropagation()
+        onSelect(computedClip.timelineItemId)
+      }}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault()
+          onSelect(computedClip.timelineItemId)
+        }
       }}
     >
       <span
@@ -838,9 +883,9 @@ function getTranscriptMessage(item: MediaItem) {
 
 function getTimelineItemStyle(
   item: TimelineItemModel,
-  pixelsPerSecond: number,
+  geometry: TimelineGeometry,
 ) {
-  const left = item.start * pixelsPerSecond
+  const left = geometry.timeToTimelineX(item.start)
 
   if (item.kind === 'video-preview') {
     return {
@@ -850,7 +895,10 @@ function getTimelineItemStyle(
 
   return {
     left: `${left}px`,
-    width: `${Math.max((item.end - item.start) * pixelsPerSecond, 4)}px`,
+    width: `${Math.max(
+      geometry.timeToTimelineX(item.end) - geometry.timeToTimelineX(item.start),
+      4,
+    )}px`,
   }
 }
 
@@ -871,6 +919,26 @@ function getTimelineItemTitle(item: TimelineItemModel) {
 
 function getPixelsPerSecond(zoom: TimelineZoom) {
   return BASE_PIXELS_PER_SECOND * (zoom / 100)
+}
+
+function createTimelineGeometry(
+  duration: number,
+  pixelsPerSecond: number,
+): TimelineGeometry {
+  const contentWidth = Math.max(duration * pixelsPerSecond, 1)
+
+  return {
+    contentWidth,
+    pixelsPerSecond,
+    timeToTimelineX: (timestamp) =>
+      Math.min(Math.max(timestamp * pixelsPerSecond, 0), contentWidth),
+    timelineXToTime: (coordinate) =>
+      Math.min(Math.max(coordinate, 0), contentWidth) / pixelsPerSecond,
+  }
+}
+
+function isValidSplitTime(clip: ComputedClip, timestamp: number) {
+  return timestamp > clip.segmentStart && timestamp < clip.segmentEnd
 }
 
 function getTimelineTicks(duration: number, pixelsPerSecond: number): TimelineTick[] {

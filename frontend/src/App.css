@@ -1084,8 +1084,10 @@ textarea:focus-visible {
 }
 
 .video-timeline {
+  --timeline-label-column-width: 82px;
   --timeline-ruler-height: 28px;
   --timeline-track-height: 46px;
+  --timeline-track-gap: 6px;
   display: grid;
   gap: 8px;
   padding: 12px;
@@ -1118,10 +1120,55 @@ textarea:focus-visible {
   flex: 0 0 auto;
   align-items: center;
   gap: 2px;
+  overflow: visible;
   border: 1px solid var(--border);
   border-radius: 7px;
   padding: 3px;
   background: var(--surface-soft);
+}
+
+.timeline-action-tooltip {
+  position: relative;
+  display: inline-flex;
+}
+
+.timeline-action-tooltip::after {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 7px);
+  z-index: 20;
+  width: max-content;
+  max-width: min(220px, calc(100vw - 32px));
+  padding: 5px 7px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text-strong);
+  background: var(--panel-strong);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.2);
+  content: attr(data-tooltip);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.2;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(2px);
+  transition: opacity 120ms ease, transform 120ms ease;
+  white-space: normal;
+}
+
+.timeline-action-tooltip:hover::after,
+.timeline-action-tooltip:focus-within::after {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+@media (width <= 760px) {
+  .timeline-action-tooltip::after {
+    top: calc(100% + 7px);
+    right: auto;
+    bottom: auto;
+    left: 0;
+  }
 }
 
 .timeline-action-button {
@@ -1163,7 +1210,7 @@ textarea:focus-visible {
 
 .timeline-body {
   display: grid;
-  grid-template-columns: 82px minmax(0, 1fr);
+  grid-template-columns: var(--timeline-label-column-width) minmax(0, 1fr);
   gap: 8px;
   border: 1px solid var(--border);
   border-radius: 7px;
@@ -1174,7 +1221,8 @@ textarea:focus-visible {
 .timeline-label-column {
   display: grid;
   grid-template-rows: var(--timeline-ruler-height) repeat(4, var(--timeline-track-height));
-  gap: 6px;
+  gap: var(--timeline-track-gap);
+  overflow: hidden;
 }
 
 .timeline-ruler-spacer,
@@ -1211,7 +1259,7 @@ textarea:focus-visible {
   position: relative;
   display: grid;
   min-width: 100%;
-  gap: 6px;
+  gap: var(--timeline-track-gap);
   cursor: pointer;
 }
 
@@ -1223,7 +1271,7 @@ textarea:focus-visible {
 .timeline-ruler {
   position: relative;
   height: var(--timeline-ruler-height);
-  overflow: visible;
+  overflow: hidden;
   border-bottom: 1px solid var(--border);
 }
 
@@ -1233,7 +1281,6 @@ textarea:focus-visible {
   bottom: 0;
   width: 1px;
   background: var(--border-strong);
-  transform: translateX(-0.5px);
 }
 
 .timeline-ruler-tick-major {
@@ -1258,12 +1305,12 @@ textarea:focus-visible {
 .timeline-track-stack {
   position: relative;
   display: grid;
-  gap: 6px;
+  gap: var(--timeline-track-gap);
 }
 
 .timeline-delete-overlay-layer {
   position: absolute;
-  top: calc(var(--timeline-ruler-height) + 6px + 5px);
+  top: calc(var(--timeline-ruler-height) + var(--timeline-track-gap) + 5px);
   right: 0;
   left: 0;
   z-index: 1;
@@ -1303,6 +1350,14 @@ textarea:focus-visible {
   background:
     linear-gradient(90deg, rgba(47, 180, 124, 0.14), rgba(50, 103, 200, 0.12)),
     var(--panel-strong);
+  cursor: pointer;
+}
+
+.timeline-video-strip:focus-visible,
+.timeline-video-strip[data-selected='true'] {
+  border-color: var(--accent);
+  outline: none;
+  box-shadow: inset 0 0 0 1px var(--accent);
 }
 
 .timeline-trim-handle {
@@ -1444,28 +1499,14 @@ textarea:focus-visible {
   text-overflow: ellipsis;
 }
 
-.timeline-playhead {
+.timeline-playhead-line {
   position: absolute;
   top: 0;
   bottom: 0;
   z-index: 3;
-  width: 2px;
-  background: var(--danger);
+  width: 0;
+  border-left: 2px solid var(--danger);
   pointer-events: none;
-  transform: translateX(-1px);
-}
-
-.timeline-playhead::before {
-  position: absolute;
-  top: 0;
-  left: 50%;
-  width: 10px;
-  height: 10px;
-  border: 2px solid var(--panel-strong);
-  border-radius: 50%;
-  background: var(--danger);
-  content: '';
-  transform: translate(-50%, -45%);
 }
 
 /* Media preview and analysis */

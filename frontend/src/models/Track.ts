@@ -4,10 +4,17 @@ export type TrackType = 'video' | 'audio' | 'text' | 'effect'
 
 export interface TimelineItem {
   id: string
-  sourceClipId: string
   trackId: string
-  start: number
-  end: number
+  sourceId: string
+  sourceStart: number
+  sourceEnd: number
+  timelineStart: number
+  timelineDuration: number
+  locked?: boolean
+  muted?: boolean
+  visible?: boolean
+  reviewId?: string
+  groupId?: string
 }
 
 export interface Track {
