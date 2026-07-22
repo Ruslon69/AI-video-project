@@ -50,9 +50,9 @@ type VideoTimelineProps = {
   onZoomChange: (zoom: TimelineZoom) => void
   onTrimCommit: (
     timelineItemId: string,
-    trimStart: number,
-    trimEnd: number,
-    sourceDuration: number,
+    relativeStart: number,
+    relativeEnd: number,
+    itemDuration: number,
   ) => void
   onSplitCommit: (timelineItemId: string, splitTime: number) => void
 }
@@ -88,9 +88,9 @@ type TimelineTrackProps = {
   onClipSelect: (timelineItemId: string) => void
   onTrimCommit: (
     timelineItemId: string,
-    trimStart: number,
-    trimEnd: number,
-    sourceDuration: number,
+    relativeStart: number,
+    relativeEnd: number,
+    itemDuration: number,
   ) => void
 }
 
@@ -531,9 +531,9 @@ function TimelineVideoStrip({
   onSelect: (timelineItemId: string) => void
   onTrimCommit: (
     timelineItemId: string,
-    trimStart: number,
-    trimEnd: number,
-    sourceDuration: number,
+    relativeStart: number,
+    relativeEnd: number,
+    itemDuration: number,
   ) => void
 }) {
   const [previewTrim, setPreviewTrim] = useState<ClipTrimRange | null>(null)
@@ -646,9 +646,9 @@ function TimelineVideoStrip({
     ) {
       onTrimCommit(
         computedClip.id,
-        finalTrim.trimStart,
-        finalTrim.trimEnd,
-        computedClip.sourceDuration || duration,
+        finalTrim.trimStart - computedClip.segmentStart,
+        finalTrim.trimEnd - computedClip.segmentStart,
+        computedClip.segmentEnd - computedClip.segmentStart || duration,
       )
     }
 

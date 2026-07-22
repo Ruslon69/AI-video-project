@@ -65,6 +65,7 @@ type EditProjectionOptions = {
 
 interface ProjectedTimelineItem extends TimelineItem {
   ancestorTimelineItemIds: string[]
+  ancestorTimelineRangesById: Record<string, TimeRange<TimelineTime>>
 }
 
 type TimelineItemRanges = {
@@ -225,6 +226,12 @@ function buildProjectedTimelineItems(
     (timelineItem) => ({
       ...timelineItem,
       ancestorTimelineItemIds: [timelineItem.id],
+      ancestorTimelineRangesById: {
+        [timelineItem.id]: {
+          start: timelineTime(timelineItem.timelineStart),
+          end: timelineTime(getTimelineItemEnd(timelineItem)),
+        },
+      },
     }),
   )
 
@@ -263,6 +270,13 @@ function splitTimelineItem(
       ...timelineItem.ancestorTimelineItemIds,
       operation.leftTimelineItemId,
     ],
+    ancestorTimelineRangesById: {
+      ...timelineItem.ancestorTimelineRangesById,
+      [operation.leftTimelineItemId]: {
+        start: timelineTime(timelineItem.timelineStart),
+        end: timelineTime(operation.splitTime),
+      },
+    },
   }
   const rightTimelineItem: ProjectedTimelineItem = {
     ...timelineItem,
@@ -274,6 +288,13 @@ function splitTimelineItem(
       ...timelineItem.ancestorTimelineItemIds,
       operation.rightTimelineItemId,
     ],
+    ancestorTimelineRangesById: {
+      ...timelineItem.ancestorTimelineRangesById,
+      [operation.rightTimelineItemId]: {
+        start: timelineTime(operation.splitTime),
+        end: timelineTime(timelineItemEnd),
+      },
+    },
   }
 
   return getTimelineItemEnd(leftTimelineItem) === rightTimelineItem.timelineStart &&
@@ -294,13 +315,10 @@ function computeTimelineItemProjection(
     .filter((operation) => ancestorTimelineItemIdSet.has(operation.timelineItemId))
     .at(-1)
   const visibleRange = trimOperation
-    ? normalizeSegmentTrimRange(
-        trimOperation.trimStart,
-        trimOperation.trimEnd,
-        {
-          start: itemRanges.timelineStart,
-          end: itemRanges.timelineEnd,
-        },
+    ? getTimelineRangeFromRelativeRange(
+        trimOperation.relativeStart,
+        trimOperation.relativeEnd,
+        getOperationTargetRange(timelineItem, trimOperation.timelineItemId),
       )
     : {
         start: itemRanges.timelineStart,
@@ -312,8 +330,16 @@ function computeTimelineItemProjection(
     ))
     .map((operation) => ({
       operationId: operation.id,
-      start: timelineTime(Math.max(operation.startTime, visibleRange.start)),
-      end: timelineTime(Math.min(operation.endTime, visibleRange.end)),
+      ...getTimelineRangeFromRelativeRange(
+        operation.relativeStart,
+        operation.relativeEnd,
+        getOperationTargetRange(timelineItem, operation.timelineItemId),
+      ),
+    }))
+    .map((range) => ({
+      operationId: range.operationId,
+      start: timelineTime(Math.max(range.start, visibleRange.start)),
+      end: timelineTime(Math.min(range.end, visibleRange.end)),
     }))
     .filter((range) => range.start < range.end)
     .sort((left, right) => left.start - right.start)
@@ -350,24 +376,19 @@ function computeTimelineItemProjection(
   }
 }
 
-function normalizeSegmentTrimRange(
-  trimStart: number,
-  trimEnd: number,
-  segmentRange: TimeRange<TimelineTime>,
+function getTimelineRangeFromRelativeRange(
+  relativeStart: number,
+  relativeEnd: number,
+  timelineRange: TimeRange<TimelineTime>,
 ): TimeRange<TimelineTime> {
+  const itemDuration = timelineRange.end - timelineRange.start
   const trimRange = normalizeTrimRange(
-    trimStart,
-    trimEnd,
-    segmentRange.end,
+    relativeStart,
+    relativeEnd,
+    itemDuration,
   )
-  const start = Math.min(
-    Math.max(trimRange.trimStart, segmentRange.start),
-    segmentRange.end,
-  )
-  const end = Math.min(
-    Math.max(trimRange.trimEnd, start),
-    segmentRange.end,
-  )
+  const start = timelineRange.start + trimRange.trimStart
+  const end = timelineRange.start + trimRange.trimEnd
 
   return start < end
     ? {
@@ -375,9 +396,19 @@ function normalizeSegmentTrimRange(
         end: timelineTime(end),
       }
     : {
-        start: segmentRange.start,
-        end: segmentRange.end,
+        start: timelineRange.start,
+        end: timelineRange.end,
       }
+}
+
+function getOperationTargetRange(
+  timelineItem: ProjectedTimelineItem,
+  timelineItemId: string,
+): TimeRange<TimelineTime> {
+  return timelineItem.ancestorTimelineRangesById[timelineItemId] ?? {
+    start: timelineTime(timelineItem.timelineStart),
+    end: timelineTime(getTimelineItemEnd(timelineItem)),
+  }
 }
 
 function getTimelineItemRanges(timelineItem: TimelineItem): TimelineItemRanges {

@@ -24,8 +24,8 @@ export interface DeleteOperation {
   id: string
   type: 'delete'
   timelineItemId: string
-  startTime: number
-  endTime: number
+  relativeStart: number
+  relativeEnd: number
   createdAt: string
 }
 
@@ -41,8 +41,8 @@ export interface TrimOperation {
   id: string
   type: 'trim'
   timelineItemId: string
-  trimStart: number
-  trimEnd: number
+  relativeStart: number
+  relativeEnd: number
   createdAt: string
 }
 

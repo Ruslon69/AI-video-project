@@ -133,32 +133,36 @@ Current operation types include:
 - `ReviewDecisionOperation`
 - placeholders for future operation types
 
-Current edit operations target persistent `timelineItemId` where applicable.
+Current edit operations target persistent `timelineItemId` where applicable. Trim and delete ranges are item-relative offsets, not absolute timeline coordinates.
+
+Item-relative ranges are measured from the operation target item's start. Projection converts those offsets into the target item's current timeline placement before calculating visible ranges, deleted ranges, and playback ranges. This keeps existing edits attached to the intended item if a future move operation changes `timelineStart`.
+
+After split, projection tracks ancestor item ranges while computing child items. An edit made before split remains relative to the parent item it targeted, while an edit made after split against a child item is relative to that child.
 
 ### TrimOperation
 
-Trim defines the visible range for a timeline item. In Engine v1 trim operations are stored as timeline-space boundaries and projection derives the corresponding source range from the timeline item's source mapping.
+Trim defines the visible range for a timeline item. Engine v1 stores trim boundaries as item-relative offsets so timeline placement can change without invalidating the edit.
 
 Fields:
 
 - `id`
 - `type: "trim"`
 - `timelineItemId`
-- `trimStart`
-- `trimEnd`
+- `relativeStart`
+- `relativeEnd`
 - `createdAt`
 
 ### DeleteOperation
 
-Delete defines a non-destructive removed range for a timeline item.
+Delete defines a non-destructive removed range for a timeline item. Engine v1 stores delete boundaries as item-relative offsets and projection maps them into the item's current timeline range.
 
 Fields:
 
 - `id`
 - `type: "delete"`
 - `timelineItemId`
-- `startTime`
-- `endTime`
+- `relativeStart`
+- `relativeEnd`
 - `createdAt`
 
 ### SplitOperation

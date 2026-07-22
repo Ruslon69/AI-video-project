@@ -54,9 +54,9 @@ type VideoWorkspaceProps = {
   onTimelineZoomChange: (zoom: TimelineZoom) => void
   onTrimCommit: (
     timelineItemId: string,
-    trimStart: number,
-    trimEnd: number,
-    sourceDuration: number,
+    relativeStart: number,
+    relativeEnd: number,
+    itemDuration: number,
   ) => void
   onSplitCommit: (timelineItemId: string, splitTime: number) => void
 }
@@ -164,9 +164,9 @@ function MediaPreview({
   onTimelineZoomChange: (zoom: TimelineZoom) => void
   onTrimCommit: (
     timelineItemId: string,
-    trimStart: number,
-    trimEnd: number,
-    sourceDuration: number,
+    relativeStart: number,
+    relativeEnd: number,
+    itemDuration: number,
   ) => void
   onSplitCommit: (timelineItemId: string, splitTime: number) => void
 }) {

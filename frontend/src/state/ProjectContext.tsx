@@ -121,8 +121,10 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
               id: createOperationId('delete'),
               type: 'delete',
               timelineItemId: primaryTimelineItem?.id ?? '',
-              startTime: suggestion.start,
-              endTime: suggestion.end,
+              relativeStart: suggestion.start -
+                (primaryTimelineItem?.timelineStart ?? 0),
+              relativeEnd: suggestion.end -
+                (primaryTimelineItem?.timelineStart ?? 0),
               createdAt,
             }))
         : []
@@ -229,19 +231,23 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
 
   const applyTrimOperation = useCallback((
     timelineItemId: string,
-    trimStart: number,
-    trimEnd: number,
-    sourceDuration: number,
+    relativeStart: number,
+    relativeEnd: number,
+    itemDuration: number,
   ) => {
     setProjectState((currentState) => {
-      const normalizedRange = normalizeTrimRange(trimStart, trimEnd, sourceDuration)
+      const normalizedRange = normalizeTrimRange(
+        relativeStart,
+        relativeEnd,
+        itemDuration,
+      )
       const createdAt = createOperationTimestamp()
       const trimOperation: TrimOperation = {
         id: createOperationId('trim'),
         type: 'trim',
         timelineItemId,
-        trimStart: normalizedRange.trimStart,
-        trimEnd: normalizedRange.trimEnd,
+        relativeStart: normalizedRange.trimStart,
+        relativeEnd: normalizedRange.trimEnd,
         createdAt,
       }
       const operationGroup: EditOperationGroup = {

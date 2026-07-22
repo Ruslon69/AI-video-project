@@ -196,9 +196,9 @@ export interface ProjectContextValue extends CentralProjectState {
   setOutputSettings: (settings: ProjectOutputSettings) => void
   applyTrimOperation: (
     timelineItemId: string,
-    trimStart: number,
-    trimEnd: number,
-    sourceDuration: number,
+    relativeStart: number,
+    relativeEnd: number,
+    itemDuration: number,
   ) => void
   applySplitOperation: (
     timelineItemId: string,
