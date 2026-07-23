@@ -27,6 +27,9 @@ import type { SeekRequestReason } from '../../state/ProjectState'
 import {
   BASE_PIXELS_PER_SECOND,
   KEYBOARD_SEEK_SECONDS,
+  SNAP_ENTER_THRESHOLD_PIXELS,
+  SNAP_RELEASE_THRESHOLD_PIXELS,
+  SNAP_SWITCH_MARGIN_PIXELS,
   TIMELINE_ZOOM_OPTIONS,
 } from './timelineConstants'
 import type { TimelineZoom } from './timelineConstants'
@@ -81,9 +84,11 @@ type TimelineTrackProps = {
   track: TimelineTrackModel
   geometry: TimelineGeometry
   duration: number
+  currentTime: number
   computedClips: ComputedClip[]
   selectedItemId: string | null
   activeMoveDragItemId: string | null
+  snapGuide: SnapGuide | null
   selectedAISuggestionIds: string[]
   activeAISuggestionId: string | null
   onItemSelect: (item: TimelineItemModel) => void
@@ -93,6 +98,8 @@ type TimelineTrackProps = {
     cancelMoveDrag: () => void,
   ) => void
   onMoveDragEnd: () => void
+  onMovePreviewEndChange: (previewEnd: number | null) => void
+  onSnapGuideChange: (snapGuide: SnapGuide | null) => void
   onTrimCommit: (
     timelineItemId: string,
     relativeStart: number,
@@ -115,6 +122,28 @@ type TimelineGeometry = {
   timeToTimelineX: (timestamp: number) => number
   timelineXToTime: (coordinate: number) => number
 }
+
+type SnapGuide = {
+  id: string
+  timestamp: number
+  kind: 'clip-boundary' | 'playhead'
+}
+
+type DraggedSnapEdge = 'start' | 'end'
+
+type ActiveSnapTarget = SnapGuide & {
+  timelineStart: number
+  draggedEdge: DraggedSnapEdge
+  priority: number
+}
+
+type VisibleRange = {
+  start: number
+  end: number
+}
+
+const DRAG_EXTENSION_PADDING_SECONDS = 5
+const TIME_EPSILON = 0.0001
 
 // Renders timeline tracks, playhead/ruler controls, and maps media analysis into timeline blocks.
 export function VideoTimeline({
@@ -142,16 +171,28 @@ export function VideoTimeline({
     cancel: () => void
   } | null>(null)
   const [activeMoveDragItemId, setActiveMoveDragItemId] = useState<string | null>(null)
-  const safeDuration = Math.max(duration || item.metadata?.duration || 0, 0)
+  const [moveDragPreviewEnd, setMoveDragPreviewEnd] = useState<number | null>(null)
+  const [snapGuide, setSnapGuide] = useState<SnapGuide | null>(null)
+  const projectedTimelineEnd = computedClips.length
+    ? Math.max(...computedClips.map((clip) => clip.visibleEnd))
+    : 0
+  const safeDuration = Math.max(
+    duration || item.metadata?.duration || 0,
+    projectedTimelineEnd,
+    0,
+  )
   const clampedCurrentTime = clampTime(currentTime, safeDuration)
+  const timelineContentDuration = moveDragPreviewEnd
+    ? Math.max(safeDuration, moveDragPreviewEnd + DRAG_EXTENSION_PADDING_SECONDS)
+    : safeDuration
   const pixelsPerSecond = getPixelsPerSecond(zoom)
   const geometry = useMemo(
-    () => createTimelineGeometry(safeDuration, pixelsPerSecond),
-    [safeDuration, pixelsPerSecond],
+    () => createTimelineGeometry(timelineContentDuration, pixelsPerSecond),
+    [timelineContentDuration, pixelsPerSecond],
   )
   const ticks = useMemo(
-    () => getTimelineTicks(safeDuration, pixelsPerSecond),
-    [safeDuration, pixelsPerSecond],
+    () => getTimelineTicks(timelineContentDuration, pixelsPerSecond),
+    [timelineContentDuration, pixelsPerSecond],
   )
   const tracks = useMemo(
     () => buildTimelineTracks(item, safeDuration, aiSuggestions),
@@ -202,6 +243,8 @@ export function VideoTimeline({
   const handleMoveDragEnd = () => {
     activeMoveDragRef.current = null
     setActiveMoveDragItemId(null)
+    setMoveDragPreviewEnd(null)
+    setSnapGuide(null)
   }
 
   useLayoutEffect(() => {
@@ -366,16 +409,20 @@ export function VideoTimeline({
                   key={track.id}
                   track={track}
                   geometry={geometry}
-                  duration={safeDuration}
+                  duration={timelineContentDuration}
+                  currentTime={clampedCurrentTime}
                   computedClips={computedClips}
                   selectedItemId={selectedTimelineItemId}
                   activeMoveDragItemId={activeMoveDragItemId}
+                  snapGuide={snapGuide}
                   selectedAISuggestionIds={selectedAISuggestionIds}
                   activeAISuggestionId={activeAISuggestionId}
                   onItemSelect={handleItemSelect}
                   onClipSelect={onTimelineItemSelect}
                   onMoveDragStart={handleMoveDragStart}
                   onMoveDragEnd={handleMoveDragEnd}
+                  onMovePreviewEndChange={setMoveDragPreviewEnd}
+                  onSnapGuideChange={setSnapGuide}
                   onTrimCommit={onTrimCommit}
                   onMoveCommit={onMoveCommit}
                 />
@@ -389,10 +436,35 @@ export function VideoTimeline({
               currentTime={clampedCurrentTime}
               geometry={geometry}
             />
+            <TimelineSnapGuide
+              snapGuide={snapGuide}
+              geometry={geometry}
+            />
           </div>
         </div>
       </div>
     </section>
+  )
+}
+
+function TimelineSnapGuide({
+  snapGuide,
+  geometry,
+}: {
+  snapGuide: SnapGuide | null
+  geometry: TimelineGeometry
+}) {
+  if (!snapGuide) {
+    return null
+  }
+
+  return (
+    <span
+      className="timeline-snap-guide"
+      data-snap-kind={snapGuide.kind}
+      style={{ left: `${geometry.timeToTimelineX(snapGuide.timestamp)}px` }}
+      aria-hidden="true"
+    />
   )
 }
 
@@ -507,15 +579,19 @@ function TimelineTrack({
   track,
   geometry,
   duration,
+  currentTime,
   computedClips,
   selectedItemId,
   activeMoveDragItemId,
+  snapGuide,
   selectedAISuggestionIds,
   activeAISuggestionId,
   onItemSelect,
   onClipSelect,
   onMoveDragStart,
   onMoveDragEnd,
+  onMovePreviewEndChange,
+  onSnapGuideChange,
   onTrimCommit,
   onMoveCommit,
 }: TimelineTrackProps) {
@@ -533,13 +609,20 @@ function TimelineTrack({
                 key={computedClip.id}
                 computedClip={computedClip}
                 duration={duration}
+                currentTime={currentTime}
                 geometry={geometry}
                 allComputedClips={computedClips}
                 isSelected={selectedItemId === computedClip.timelineItemId}
                 isMoveDragging={activeMoveDragItemId === computedClip.timelineItemId}
+                isSnapTarget={
+                  snapGuide?.kind === 'clip-boundary' &&
+                  snapGuide.id.startsWith(`${computedClip.timelineItemId}-`)
+                }
                 onSelect={onClipSelect}
                 onMoveDragStart={onMoveDragStart}
                 onMoveDragEnd={onMoveDragEnd}
+                onMovePreviewEndChange={onMovePreviewEndChange}
+                onSnapGuideChange={onSnapGuideChange}
                 onTrimCommit={onTrimCommit}
                 onMoveCommit={onMoveCommit}
               />
@@ -585,28 +668,36 @@ function TimelineTrack({
 function TimelineVideoStrip({
   computedClip,
   duration,
+  currentTime,
   geometry,
   allComputedClips,
   isSelected,
   isMoveDragging,
+  isSnapTarget,
   onSelect,
   onMoveDragStart,
   onMoveDragEnd,
+  onMovePreviewEndChange,
+  onSnapGuideChange,
   onTrimCommit,
   onMoveCommit,
 }: {
   computedClip: ComputedClip
   duration: number
+  currentTime: number
   geometry: TimelineGeometry
   allComputedClips: ComputedClip[]
   isSelected: boolean
   isMoveDragging: boolean
+  isSnapTarget: boolean
   onSelect: (timelineItemId: string) => void
   onMoveDragStart: (
     timelineItemId: string,
     cancelMoveDrag: () => void,
   ) => void
   onMoveDragEnd: () => void
+  onMovePreviewEndChange: (previewEnd: number | null) => void
+  onSnapGuideChange: (snapGuide: SnapGuide | null) => void
   onTrimCommit: (
     timelineItemId: string,
     relativeStart: number,
@@ -637,8 +728,10 @@ function TimelineVideoStrip({
     element: HTMLSpanElement
     startClientX: number
     initialTimelineStart: number
+    lastRawTimelineStart: number
     moved: boolean
   } | null>(null)
+  const activeSnapTargetRef = useRef<ActiveSnapTarget | null>(null)
 
   useEffect(() => {
     setPreviewTrim(null)
@@ -761,8 +854,11 @@ function TimelineVideoStrip({
     }
 
     moveDragStateRef.current = null
+    activeSnapTargetRef.current = null
     previewTimelineStartRef.current = null
     setPreviewTimelineStart(null)
+    onMovePreviewEndChange(null)
+    onSnapGuideChange(null)
     onMoveDragEnd()
   }
 
@@ -783,13 +879,22 @@ function TimelineVideoStrip({
       moveDragState.initialTimelineStart
 
     moveDragStateRef.current = null
+    activeSnapTargetRef.current = null
 
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId)
     }
 
+    const finalVisibleRange = getMovedVisibleRange(finalTimelineStart, computedClip)
+    const isValidDrop = validatePlacement(
+      finalVisibleRange,
+      computedClip.id,
+      allComputedClips,
+    )
+
     if (
       shouldCommit &&
+      isValidDrop &&
       moveDragState.moved &&
       Math.abs(finalTimelineStart - moveDragState.initialTimelineStart) >=
         minimumTrimDuration / 2
@@ -799,6 +904,8 @@ function TimelineVideoStrip({
 
     previewTimelineStartRef.current = null
     setPreviewTimelineStart(null)
+    onMovePreviewEndChange(null)
+    onSnapGuideChange(null)
     onMoveDragEnd()
   }
 
@@ -809,20 +916,23 @@ function TimelineVideoStrip({
       return computedClip.segmentStart
     }
 
-    const timelineItemDuration = Math.max(
-      computedClip.segmentEnd - computedClip.segmentStart,
-      0,
-    )
-    const maxTimelineStart = Math.max(duration - timelineItemDuration, 0)
-    const nextTimelineStart = moveDragState.initialTimelineStart +
+    const rawTimelineStart = moveDragState.initialTimelineStart +
       (clientX - moveDragState.startClientX) / geometry.pixelsPerSecond
-
-    return getNearestNonOverlappingTimelineStart(
-      nextTimelineStart,
-      maxTimelineStart,
+    moveDragState.lastRawTimelineStart = rawTimelineStart
+    const resolvedMove = getResolvedMoveStart(
+      Math.max(rawTimelineStart, 0),
       computedClip,
       allComputedClips,
+      currentTime,
+      geometry,
+      activeSnapTargetRef.current,
     )
+    const nextTimelineStart = Math.max(resolvedMove.timelineStart, 0)
+
+    activeSnapTargetRef.current = resolvedMove.activeSnapTarget
+    onSnapGuideChange(activeSnapTargetRef.current)
+
+    return nextTimelineStart
   }
 
   const handleMovePointerDown = (event: PointerEvent<HTMLSpanElement>) => {
@@ -843,9 +953,11 @@ function TimelineVideoStrip({
       element: event.currentTarget,
       startClientX: event.clientX,
       initialTimelineStart: computedClip.segmentStart,
+      lastRawTimelineStart: computedClip.segmentStart,
       moved: false,
     }
     previewTimelineStartRef.current = computedClip.segmentStart
+    activeSnapTargetRef.current = null
     event.currentTarget.setPointerCapture(event.pointerId)
     onMoveDragStart(computedClip.timelineItemId, cancelMoveDrag)
   }
@@ -866,6 +978,7 @@ function TimelineVideoStrip({
       Math.abs(nextTimelineStart - moveDragState.initialTimelineStart) >=
         minimumTrimDuration / 2
     previewTimelineStartRef.current = nextTimelineStart
+    onMovePreviewEndChange(getMovedVisibleRange(nextTimelineStart, computedClip).end)
     setPreviewTimelineStart(nextTimelineStart)
   }
 
@@ -874,6 +987,7 @@ function TimelineVideoStrip({
       className="timeline-video-strip"
       data-selected={isSelected}
       data-dragging={isMoveDragging ? true : undefined}
+      data-snap-target={isSnapTarget ? true : undefined}
       role="button"
       tabIndex={0}
       style={{
@@ -958,47 +1072,198 @@ function normalizeTimelineSegmentTrimRange(
       }
 }
 
-function getNearestNonOverlappingTimelineStart(
-  requestedTimelineStart: number,
-  maxTimelineStart: number,
+function getMovedVisibleRange(
+  timelineStart: number,
   draggedClip: ComputedClip,
+): VisibleRange {
+  const visibleOffset = draggedClip.visibleStart - draggedClip.segmentStart
+  const visibleDuration = Math.max(draggedClip.visibleEnd - draggedClip.visibleStart, 0)
+  const start = timelineStart + visibleOffset
+
+  return {
+    start,
+    end: start + visibleDuration,
+  }
+}
+
+function validatePlacement(
+  candidateVisibleRange: VisibleRange,
+  draggedComputedClipId: string,
   computedClips: ComputedClip[],
 ) {
-  const visibleOffset = draggedClip.visibleStart - draggedClip.segmentStart
-  const draggedVisibleDuration = Math.max(
-    draggedClip.visibleEnd - draggedClip.visibleStart,
-    0,
-  )
-  const requestedVisibleStart = requestedTimelineStart + visibleOffset
-  const currentVisibleStart = draggedClip.visibleStart
-  const currentVisibleEnd = draggedClip.visibleEnd
-  const sortedSiblingRanges = computedClips
-    .filter((clip) => clip.timelineItemId !== draggedClip.timelineItemId)
-    .map((clip) => ({
+  if (
+    !Number.isFinite(candidateVisibleRange.start) ||
+    !Number.isFinite(candidateVisibleRange.end) ||
+    candidateVisibleRange.start < -TIME_EPSILON ||
+    candidateVisibleRange.end < candidateVisibleRange.start - TIME_EPSILON
+  ) {
+    return false
+  }
+
+  return computedClips
+    .filter((clip) => clip.id !== draggedComputedClipId)
+    .every((clip) => !rangesOverlap(candidateVisibleRange, {
       start: clip.visibleStart,
       end: clip.visibleEnd,
     }))
-    .filter((range) => range.start < range.end)
-    .sort((left, right) => left.start - right.start)
-  const previousRange = sortedSiblingRanges
-    .filter((range) => range.end <= currentVisibleStart)
-    .at(-1)
-  const nextRange = sortedSiblingRanges.find(
-    (range) => range.start >= currentVisibleEnd,
-  )
-  const minVisibleStart = previousRange?.end ?? 0
-  const maxVisibleStart = nextRange
-    ? nextRange.start - draggedVisibleDuration
-    : maxTimelineStart + visibleOffset
-  const clampedVisibleStart = Math.min(
-    Math.max(requestedVisibleStart, minVisibleStart),
-    Math.max(minVisibleStart, maxVisibleStart),
-  )
+}
 
-  return Math.min(
-    Math.max(clampedVisibleStart - visibleOffset, 0),
-    maxTimelineStart,
+function rangesOverlap(leftRange: VisibleRange, rightRange: VisibleRange) {
+  return leftRange.start < rightRange.end - TIME_EPSILON &&
+    leftRange.end > rightRange.start + TIME_EPSILON
+}
+
+function getResolvedMoveStart(
+  rawCandidateTimelineStart: number,
+  draggedClip: ComputedClip,
+  computedClips: ComputedClip[],
+  playheadTime: number,
+  geometry: TimelineGeometry,
+  activeSnapTarget: ActiveSnapTarget | null,
+) {
+  const rawCandidates = getSnapCandidates(
+    rawCandidateTimelineStart,
+    draggedClip,
+    computedClips,
+    playheadTime,
+    geometry,
+    SNAP_RELEASE_THRESHOLD_PIXELS,
   )
+  const activeCandidate = activeSnapTarget
+    ? rawCandidates.find(
+        (candidate) =>
+          candidate.id === activeSnapTarget.id &&
+          candidate.draggedEdge === activeSnapTarget.draggedEdge &&
+          candidate.distancePixels <= SNAP_RELEASE_THRESHOLD_PIXELS,
+      ) ?? null
+    : null
+  const enterCandidates = rawCandidates.filter(
+    (candidate) => candidate.distancePixels <= SNAP_ENTER_THRESHOLD_PIXELS,
+  )
+  const nearestEnterCandidate = sortSnapCandidates(enterCandidates)[0] ?? null
+
+  if (
+    activeCandidate &&
+    nearestEnterCandidate &&
+    nearestEnterCandidate.id !== activeCandidate.id &&
+    nearestEnterCandidate.distancePixels + SNAP_SWITCH_MARGIN_PIXELS <
+      activeCandidate.distancePixels
+  ) {
+    return {
+      timelineStart: nearestEnterCandidate.timelineStart,
+      activeSnapTarget: toActiveSnapTarget(nearestEnterCandidate),
+    }
+  }
+
+  if (activeCandidate) {
+    return {
+      timelineStart: activeCandidate.timelineStart,
+      activeSnapTarget: toActiveSnapTarget(activeCandidate),
+    }
+  }
+
+  if (nearestEnterCandidate) {
+    return {
+      timelineStart: nearestEnterCandidate.timelineStart,
+      activeSnapTarget: toActiveSnapTarget(nearestEnterCandidate),
+    }
+  }
+
+  return {
+    timelineStart: rawCandidateTimelineStart,
+    activeSnapTarget: null,
+  }
+}
+
+function getSnapCandidates(
+  rawCandidateTimelineStart: number,
+  draggedClip: ComputedClip,
+  computedClips: ComputedClip[],
+  playheadTime: number,
+  geometry: TimelineGeometry,
+  maxDistancePixels: number,
+) {
+  const visibleOffset = draggedClip.visibleStart - draggedClip.segmentStart
+  const visibleDuration = Math.max(
+    draggedClip.visibleEnd - draggedClip.visibleStart,
+    0,
+  )
+  const requestedVisibleStart = rawCandidateTimelineStart + visibleOffset
+  const requestedVisibleEnd = requestedVisibleStart + visibleDuration
+  const siblingTargets = computedClips
+    .filter((clip) => clip.id !== draggedClip.id)
+    .flatMap((clip) => [
+      {
+        id: `${clip.timelineItemId}-start`,
+        timestamp: clip.visibleStart,
+        kind: 'clip-boundary' as const,
+        targetItemId: clip.timelineItemId,
+        priority: 0,
+      },
+      {
+        id: `${clip.timelineItemId}-end`,
+        timestamp: clip.visibleEnd,
+        kind: 'clip-boundary' as const,
+        targetItemId: clip.timelineItemId,
+        priority: 0,
+      },
+    ])
+  const snapTargets = [
+    ...siblingTargets,
+    {
+      id: 'playhead',
+      timestamp: playheadTime,
+      kind: 'playhead' as const,
+      targetItemId: null,
+      priority: 1,
+    },
+  ]
+  return sortSnapCandidates(snapTargets.flatMap((target) => [
+    {
+      ...target,
+      draggedEdge: 'start' as const,
+      timelineStart: target.timestamp - visibleOffset,
+      distancePixels: Math.abs(
+        geometry.timeToTimelineX(requestedVisibleStart) -
+          geometry.timeToTimelineX(target.timestamp),
+      ),
+    },
+    {
+      ...target,
+      draggedEdge: 'end' as const,
+      timelineStart: target.timestamp - visibleOffset - visibleDuration,
+      distancePixels: Math.abs(
+        geometry.timeToTimelineX(requestedVisibleEnd) -
+          geometry.timeToTimelineX(target.timestamp),
+      ),
+    },
+  ]).filter(
+    (candidate) => candidate.distancePixels <= maxDistancePixels,
+  ))
+}
+
+function sortSnapCandidates<TCandidate extends {
+  distancePixels: number
+  priority: number
+}>(snapCandidates: TCandidate[]) {
+  return [...snapCandidates].sort((left, right) => {
+    const distanceDelta = left.distancePixels - right.distancePixels
+
+    return Math.abs(distanceDelta) > 0.0001
+      ? distanceDelta
+      : left.priority - right.priority
+  })
+}
+
+function toActiveSnapTarget(candidate: ReturnType<typeof getSnapCandidates>[number]) {
+  return {
+    id: candidate.id,
+    timestamp: candidate.timestamp,
+    kind: candidate.kind,
+    timelineStart: candidate.timelineStart,
+    draggedEdge: candidate.draggedEdge,
+    priority: candidate.priority,
+  }
 }
 
 function buildTimelineTracks(

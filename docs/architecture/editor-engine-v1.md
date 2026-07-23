@@ -196,7 +196,74 @@ Fields:
 
 Move does not change source identity, source range, timeline duration, trim ranges, or delete ranges. Projection replays move operations with split operations in operation-log order, then maps item-relative trim and delete operations onto the item's current placement. This keeps existing edits attached to the intended timeline item when the item moves.
 
-Engine v1 has no snapping, ripple movement, or overlap prevention. Those behaviors should be added as isolated placement policies around MoveOperation instead of changing trim/delete ownership.
+Engine v1 prevents overlap on committed Move drops in the current single-track video timeline. It does not ripple, reorder, insert, or move neighboring clips.
+
+Move drag uses a free preview model. Only the dragged clip moves during pointer movement. Other clips remain stationary and temporary visual overlap is allowed. Earlier collision-preview resolvers tried to push the dragged preview into valid gaps while the pointer was still moving; that made movement unpredictable and could look like neighboring segments were being pushed. Engine v1 now evaluates collisions only on drop.
+
+Drag keeps three separate positions:
+
+- `originalTimelineStart`: committed position before drag.
+- `rawCandidateTimelineStart`: position derived only from original start plus pointer delta through timeline geometry.
+- `resolvedPreviewTimelineStart`: raw position after optional Snap.
+
+Collision self-exclusion uses `ComputedClip.id`, the unique projected visible segment identity. This matters after Split because child segments are projected timeline items; exclusion must remove only the dragged visible segment, not a broader source ancestor or unrelated split child.
+
+Drop Placement Policy v1:
+
+- Validate the final preview visible range against every other projected `ComputedClip.visibleStart` / `visibleEnd` range.
+- Exclude only the dragged `ComputedClip.id`.
+- Touching boundaries is valid.
+- Overlap is invalid.
+- Invalid drop rolls the preview back to the original position and creates no `MoveOperation`.
+- Valid drop creates one `MoveOperation` for the dragged timeline item only.
+
+Timeline start remains bounded at `0`. During drag, timeline content width expands dynamically from the preview end plus a small padding. After a valid drop, projected clip positions determine the timeline content end. After cancellation or invalid drop, temporary expansion disappears.
+
+### Snap System v1
+
+Snapping is an interaction-layer placement aid for Move. It affects only drag preview and the final `timelineStart` stored by `MoveOperation` if the drop is valid; it does not create a separate operation.
+
+Snap targets:
+
+- Start of another visible computed clip
+- End of another visible computed clip
+- Current playhead
+
+The dragged clip is excluded from snap target generation. Snap checks use projected `ComputedClip` visible ranges, so split children, trimmed clips, and moved clips expose their current visible boundaries.
+
+Drag keeps two separate placements:
+
+- `rawCandidateTimelineStart`: unsnapped placement derived directly from pointer movement.
+- `resolvedPreviewTimelineStart`: final preview placement after snap resolution.
+
+Snap detection always compares targets against the raw candidate edges. The resolved preview is not fed back into later pointer calculations.
+
+Snap uses hysteresis:
+
+- Enter threshold: `8px`
+- Release threshold: `14px`
+- Switch margin: `2px`
+
+When a dragged visible edge enters the enter threshold, preview snaps immediately. Once snapped, the active target is retained until the raw dragged edge leaves the release threshold. A nearby target can replace the active target only when it is meaningfully closer by the switch margin.
+
+Priority:
+
+- Nearest target wins.
+- If distances are equal, clip boundaries win over the playhead.
+- A snap acquired through the dragged start edge continues resolving through the start edge while active.
+- A snap acquired through the dragged end edge continues resolving through the end edge while active.
+
+Visual feedback is intentionally minimal: a thin guide line appears at the active snap target, and clip-boundary targets receive a temporary highlight. The guide disappears when the snap is lost or the drag ends.
+
+Snap and drop validation order:
+
+1. Raw candidate placement from pointer movement.
+2. Stable snap target is resolved with hysteresis.
+3. Preview renders at the snapped or raw position.
+4. On drop, final placement is validated against projected computed clip ranges.
+5. Valid drops commit one `MoveOperation`; invalid drops roll back without history.
+
+Snap may preview a placement that is invalid for final drop. Drop validation remains authoritative, so snapping cannot commit an overlapping placement.
 
 ### ReviewDecisionOperation
 
