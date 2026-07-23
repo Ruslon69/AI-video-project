@@ -74,6 +74,7 @@ function App() {
     applyTrimOperation,
     applySplitOperation,
     applyDeleteOperation,
+    applyMoveOperation,
     canUndo,
     canRedo,
     undo,
@@ -306,6 +307,7 @@ function App() {
             onTimelineZoomChange={setTimelineZoom}
             onTrimCommit={applyTrimOperation}
             onSplitCommit={applySplitOperation}
+            onMoveCommit={applyMoveOperation}
 	        />
         <ReviewPanel
           stage={selectedStage}

@@ -130,6 +130,7 @@ Current operation types include:
 - `TrimOperation`
 - `DeleteOperation`
 - `SplitOperation`
+- `MoveOperation`
 - `ReviewDecisionOperation`
 - placeholders for future operation types
 
@@ -181,6 +182,22 @@ Fields:
 
 The source media is not duplicated. The left child's source end and timeline end match the right child's source start and timeline start.
 
+### MoveOperation
+
+Move changes only a timeline item's placement.
+
+Fields:
+
+- `id`
+- `type: "move"`
+- `timelineItemId`
+- `timelineStart`
+- `createdAt`
+
+Move does not change source identity, source range, timeline duration, trim ranges, or delete ranges. Projection replays move operations with split operations in operation-log order, then maps item-relative trim and delete operations onto the item's current placement. This keeps existing edits attached to the intended timeline item when the item moves.
+
+Engine v1 has no snapping, ripple movement, or overlap prevention. Those behaviors should be added as isolated placement policies around MoveOperation instead of changing trim/delete ownership.
+
 ### ReviewDecisionOperation
 
 Review decisions are stored as operations so accept/reject participates in undo/redo.
@@ -203,6 +220,7 @@ Examples:
 - Rejecting an AI suggestion creates one review decision operation in one group.
 - Trimming creates one trim operation in one group.
 - Splitting creates one split operation in one group.
+- Moving creates one move operation in one group.
 
 Undo and redo operate on groups, not individual operations.
 
@@ -380,6 +398,7 @@ Edit operation targeting:
 - Split operates only on the selected timeline item and is disabled when the playhead is outside that item.
 - Delete creates an item-relative delete operation for the selected timeline item.
 - Trim handles are available only on the selected timeline item.
+- Move drag is allowed only on the selected timeline item. Pointer down on another clip selects it first.
 
 The editor should not search for the first clip under the playhead as an operation target. The playhead describes time; selection describes edit ownership.
 

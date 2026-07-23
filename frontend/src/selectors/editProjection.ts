@@ -1,4 +1,5 @@
 import type { Clip } from '../models/Clip'
+import type { EditOperation, SplitOperation } from '../models/EditOperation'
 import type { Project } from '../models/Project'
 import {
   playbackTime,
@@ -12,7 +13,6 @@ import {
 import type { TimelineItem } from '../models/Track'
 import {
   getDeleteOperations,
-  getSplitOperations,
   getTrimOperations,
   normalizeTrimRange,
 } from './editSelectors'
@@ -87,7 +87,7 @@ export function buildEditProjection(
   )
   const timelineItems = buildProjectedTimelineItems(
     project.timeline.items,
-    operationIndex,
+    project.operations,
   )
   const clips = timelineItems.flatMap((timelineItem) => {
     const sourceClip = sourceClipsById.get(timelineItem.sourceId)
@@ -201,7 +201,6 @@ function createOperationIndex(project: Project) {
     string,
     ReturnType<typeof getDeleteOperations>
   >()
-  const splitOperations = getSplitOperations(project)
   const trimOperations = getTrimOperations(project)
 
   for (const operation of getDeleteOperations(project)) {
@@ -213,14 +212,13 @@ function createOperationIndex(project: Project) {
 
   return {
     deleteOperationsByTimelineItemId,
-    splitOperations,
     trimOperations,
   }
 }
 
 function buildProjectedTimelineItems(
   initialTimelineItems: TimelineItem[],
-  operationIndex: ReturnType<typeof createOperationIndex>,
+  operations: EditOperation[],
 ): ProjectedTimelineItem[] {
   let timelineItems: ProjectedTimelineItem[] = initialTimelineItems.map(
     (timelineItem) => ({
@@ -235,26 +233,57 @@ function buildProjectedTimelineItems(
     }),
   )
 
-  for (const operation of operationIndex.splitOperations) {
-    timelineItems = timelineItems.flatMap((timelineItem) => {
-      if (
-        timelineItem.id !== operation.timelineItemId ||
-        operation.splitTime <= timelineItem.timelineStart ||
-        operation.splitTime >= getTimelineItemEnd(timelineItem)
-      ) {
-        return [timelineItem]
-      }
+  for (const operation of operations) {
+    if (operation.type === 'move') {
+      timelineItems = timelineItems.map((timelineItem) =>
+        timelineItem.id === operation.timelineItemId
+          ? moveTimelineItem(timelineItem, operation.timelineStart)
+          : timelineItem,
+      )
+    }
 
-      return splitTimelineItem(timelineItem, operation)
-    })
+    if (operation.type === 'split') {
+      timelineItems = timelineItems.flatMap((timelineItem) => {
+        if (
+          timelineItem.id !== operation.timelineItemId ||
+          operation.splitTime <= timelineItem.timelineStart ||
+          operation.splitTime >= getTimelineItemEnd(timelineItem)
+        ) {
+          return [timelineItem]
+        }
+
+        return splitTimelineItem(timelineItem, operation)
+      })
+    }
   }
 
   return timelineItems
 }
 
+function moveTimelineItem(
+  timelineItem: ProjectedTimelineItem,
+  timelineStart: number,
+): ProjectedTimelineItem {
+  const safeTimelineStart = Number.isFinite(timelineStart)
+    ? Math.max(timelineStart, 0)
+    : timelineItem.timelineStart
+
+  return {
+    ...timelineItem,
+    timelineStart: safeTimelineStart,
+    ancestorTimelineRangesById: {
+      ...timelineItem.ancestorTimelineRangesById,
+      [timelineItem.id]: {
+        start: timelineTime(safeTimelineStart),
+        end: timelineTime(safeTimelineStart + timelineItem.timelineDuration),
+      },
+    },
+  }
+}
+
 function splitTimelineItem(
   timelineItem: ProjectedTimelineItem,
-  operation: ReturnType<typeof getSplitOperations>[number],
+  operation: SplitOperation,
 ): ProjectedTimelineItem[] {
   const timelineItemEnd = getTimelineItemEnd(timelineItem)
   const sourceSplitTime = getSourceTimeAtTimelineTime(

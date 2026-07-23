@@ -7,6 +7,7 @@ import type {
   DeleteOperation,
   EditOperation,
   EditOperationGroup,
+  MoveOperation,
   ReviewDecisionOperation,
   SplitOperation,
   TrimOperation,
@@ -388,6 +389,51 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
     })
   }, [])
 
+  const applyMoveOperation = useCallback((
+    timelineItemId: string,
+    timelineStart: number,
+  ) => {
+    if (!Number.isFinite(timelineStart)) {
+      return
+    }
+
+    setProjectState((currentState) => {
+      const createdAt = createOperationTimestamp()
+      const moveOperation: MoveOperation = {
+        id: createOperationId('move'),
+        type: 'move',
+        timelineItemId,
+        timelineStart: Math.max(timelineStart, 0),
+        createdAt,
+      }
+      const operationGroup: EditOperationGroup = {
+        actionId: createOperationId('move-action'),
+        operations: [moveOperation],
+      }
+      const operationState = applyOperationGroup(
+        currentState.project.operations,
+        operationGroup,
+      )
+
+      return {
+        ...currentState,
+        project: {
+          ...currentState.project,
+          operations: operationState.operations,
+          history: {
+            ...currentState.project.history,
+            undoStack: [
+              ...currentState.project.history.undoStack,
+              ...operationState.undoStack,
+            ],
+            redoStack: operationState.redoStack,
+          },
+          updatedAt: createdAt,
+        },
+      }
+    })
+  }, [])
+
   const undo = useCallback(() => {
     setProjectState((currentState) => {
       const operation = currentState.project.history.undoStack.at(-1)
@@ -469,6 +515,7 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
       applyTrimOperation,
       applySplitOperation,
       applyDeleteOperation,
+      applyMoveOperation,
       undo,
       redo,
     }),
@@ -488,6 +535,7 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
       applyTrimOperation,
       applySplitOperation,
       applyDeleteOperation,
+      applyMoveOperation,
       undo,
       redo,
     ],

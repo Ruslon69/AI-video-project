@@ -55,6 +55,7 @@ type VideoTimelineProps = {
     itemDuration: number,
   ) => void
   onSplitCommit: (timelineItemId: string, splitTime: number) => void
+  onMoveCommit: (timelineItemId: string, timelineStart: number) => void
 }
 
 type TimelineHeaderProps = {
@@ -82,16 +83,23 @@ type TimelineTrackProps = {
   duration: number
   computedClips: ComputedClip[]
   selectedItemId: string | null
+  activeMoveDragItemId: string | null
   selectedAISuggestionIds: string[]
   activeAISuggestionId: string | null
   onItemSelect: (item: TimelineItemModel) => void
   onClipSelect: (timelineItemId: string) => void
+  onMoveDragStart: (
+    timelineItemId: string,
+    cancelMoveDrag: () => void,
+  ) => void
+  onMoveDragEnd: () => void
   onTrimCommit: (
     timelineItemId: string,
     relativeStart: number,
     relativeEnd: number,
     itemDuration: number,
   ) => void
+  onMoveCommit: (timelineItemId: string, timelineStart: number) => void
 }
 
 type TimelineTick = {
@@ -125,10 +133,15 @@ export function VideoTimeline({
   onZoomChange,
   onTrimCommit,
   onSplitCommit,
+  onMoveCommit,
 }: VideoTimelineProps) {
   const scrollViewportRef = useRef<HTMLDivElement | null>(null)
   const pendingPlayheadOffsetRef = useRef<number | null>(null)
   const isScrubbingRef = useRef(false)
+  const activeMoveDragRef = useRef<{
+    cancel: () => void
+  } | null>(null)
+  const [activeMoveDragItemId, setActiveMoveDragItemId] = useState<string | null>(null)
   const safeDuration = Math.max(duration || item.metadata?.duration || 0, 0)
   const clampedCurrentTime = clampTime(currentTime, safeDuration)
   const pixelsPerSecond = getPixelsPerSecond(zoom)
@@ -151,6 +164,45 @@ export function VideoTimeline({
           isValidSplitTime(clip, clampedCurrentTime),
       ) ?? null
     : null
+
+  useEffect(() => {
+    if (!activeMoveDragItemId) {
+      return
+    }
+
+    const handleCancelMoveDrag = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== 'Escape') {
+        return
+      }
+
+      event.preventDefault()
+      event.stopImmediatePropagation()
+      activeMoveDragRef.current?.cancel()
+      activeMoveDragRef.current = null
+      setActiveMoveDragItemId(null)
+    }
+
+    window.addEventListener('keydown', handleCancelMoveDrag)
+
+    return () => {
+      window.removeEventListener('keydown', handleCancelMoveDrag)
+    }
+  }, [activeMoveDragItemId])
+
+  const handleMoveDragStart = (
+    timelineItemId: string,
+    cancelMoveDrag: () => void,
+  ) => {
+    activeMoveDragRef.current = {
+      cancel: cancelMoveDrag,
+    }
+    setActiveMoveDragItemId(timelineItemId)
+  }
+
+  const handleMoveDragEnd = () => {
+    activeMoveDragRef.current = null
+    setActiveMoveDragItemId(null)
+  }
 
   useLayoutEffect(() => {
     const scrollViewport = scrollViewportRef.current
@@ -317,11 +369,15 @@ export function VideoTimeline({
                   duration={safeDuration}
                   computedClips={computedClips}
                   selectedItemId={selectedTimelineItemId}
+                  activeMoveDragItemId={activeMoveDragItemId}
                   selectedAISuggestionIds={selectedAISuggestionIds}
                   activeAISuggestionId={activeAISuggestionId}
                   onItemSelect={handleItemSelect}
                   onClipSelect={onTimelineItemSelect}
+                  onMoveDragStart={handleMoveDragStart}
+                  onMoveDragEnd={handleMoveDragEnd}
                   onTrimCommit={onTrimCommit}
+                  onMoveCommit={onMoveCommit}
                 />
               ))}
             </div>
@@ -453,11 +509,15 @@ function TimelineTrack({
   duration,
   computedClips,
   selectedItemId,
+  activeMoveDragItemId,
   selectedAISuggestionIds,
   activeAISuggestionId,
   onItemSelect,
   onClipSelect,
+  onMoveDragStart,
+  onMoveDragEnd,
   onTrimCommit,
+  onMoveCommit,
 }: TimelineTrackProps) {
   return (
     <div
@@ -474,9 +534,14 @@ function TimelineTrack({
                 computedClip={computedClip}
                 duration={duration}
                 geometry={geometry}
+                allComputedClips={computedClips}
                 isSelected={selectedItemId === computedClip.timelineItemId}
+                isMoveDragging={activeMoveDragItemId === computedClip.timelineItemId}
                 onSelect={onClipSelect}
+                onMoveDragStart={onMoveDragStart}
+                onMoveDragEnd={onMoveDragEnd}
                 onTrimCommit={onTrimCommit}
+                onMoveCommit={onMoveCommit}
               />
             ))
           ) : null
@@ -521,38 +586,69 @@ function TimelineVideoStrip({
   computedClip,
   duration,
   geometry,
+  allComputedClips,
   isSelected,
+  isMoveDragging,
   onSelect,
+  onMoveDragStart,
+  onMoveDragEnd,
   onTrimCommit,
+  onMoveCommit,
 }: {
   computedClip: ComputedClip
   duration: number
   geometry: TimelineGeometry
+  allComputedClips: ComputedClip[]
   isSelected: boolean
+  isMoveDragging: boolean
   onSelect: (timelineItemId: string) => void
+  onMoveDragStart: (
+    timelineItemId: string,
+    cancelMoveDrag: () => void,
+  ) => void
+  onMoveDragEnd: () => void
   onTrimCommit: (
     timelineItemId: string,
     relativeStart: number,
     relativeEnd: number,
     itemDuration: number,
   ) => void
+  onMoveCommit: (timelineItemId: string, timelineStart: number) => void
 }) {
   const [previewTrim, setPreviewTrim] = useState<ClipTrimRange | null>(null)
+  const [previewTimelineStart, setPreviewTimelineStart] = useState<number | null>(null)
   const trimRange = {
     trimStart: computedClip.visibleStart,
     trimEnd: computedClip.visibleEnd,
   }
   const activeTrim = previewTrim ?? trimRange
+  const activeTimelineStart = previewTimelineStart ?? computedClip.segmentStart
+  const timelineOffset = activeTimelineStart - computedClip.segmentStart
+  const displayStart = activeTrim.trimStart + timelineOffset
+  const displayEnd = activeTrim.trimEnd + timelineOffset
   const previewTrimRef = useRef<ClipTrimRange | null>(null)
+  const previewTimelineStartRef = useRef<number | null>(null)
   const dragStateRef = useRef<{
     edge: 'start' | 'end'
     pointerId: number
+  } | null>(null)
+  const moveDragStateRef = useRef<{
+    pointerId: number
+    element: HTMLSpanElement
+    startClientX: number
+    initialTimelineStart: number
+    moved: boolean
   } | null>(null)
 
   useEffect(() => {
     setPreviewTrim(null)
     previewTrimRef.current = null
   }, [trimRange.trimStart, trimRange.trimEnd])
+
+  useEffect(() => {
+    setPreviewTimelineStart(null)
+    previewTimelineStartRef.current = null
+  }, [computedClip.segmentStart])
 
   const getPreviewTrim = (
     clientX: number,
@@ -657,23 +753,146 @@ function TimelineVideoStrip({
     previewTrimRef.current = null
   }
 
+  const cancelMoveDrag = () => {
+    const moveDragState = moveDragStateRef.current
+
+    if (moveDragState?.element.hasPointerCapture(moveDragState.pointerId)) {
+      moveDragState.element.releasePointerCapture(moveDragState.pointerId)
+    }
+
+    moveDragStateRef.current = null
+    previewTimelineStartRef.current = null
+    setPreviewTimelineStart(null)
+    onMoveDragEnd()
+  }
+
+  const finishMoveDrag = (
+    event: PointerEvent<HTMLSpanElement>,
+    shouldCommit: boolean,
+  ) => {
+    const moveDragState = moveDragStateRef.current
+
+    if (!moveDragState || moveDragState.pointerId !== event.pointerId) {
+      return
+    }
+
+    event.preventDefault()
+    event.stopPropagation()
+
+    const finalTimelineStart = previewTimelineStartRef.current ??
+      moveDragState.initialTimelineStart
+
+    moveDragStateRef.current = null
+
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+
+    if (
+      shouldCommit &&
+      moveDragState.moved &&
+      Math.abs(finalTimelineStart - moveDragState.initialTimelineStart) >=
+        minimumTrimDuration / 2
+    ) {
+      onMoveCommit(computedClip.timelineItemId, finalTimelineStart)
+    }
+
+    previewTimelineStartRef.current = null
+    setPreviewTimelineStart(null)
+    onMoveDragEnd()
+  }
+
+  const getNextMoveStart = (clientX: number) => {
+    const moveDragState = moveDragStateRef.current
+
+    if (!moveDragState) {
+      return computedClip.segmentStart
+    }
+
+    const timelineItemDuration = Math.max(
+      computedClip.segmentEnd - computedClip.segmentStart,
+      0,
+    )
+    const maxTimelineStart = Math.max(duration - timelineItemDuration, 0)
+    const nextTimelineStart = moveDragState.initialTimelineStart +
+      (clientX - moveDragState.startClientX) / geometry.pixelsPerSecond
+
+    return getNearestNonOverlappingTimelineStart(
+      nextTimelineStart,
+      maxTimelineStart,
+      computedClip,
+      allComputedClips,
+    )
+  }
+
+  const handleMovePointerDown = (event: PointerEvent<HTMLSpanElement>) => {
+    if (event.button !== 0 || isTrimHandleTarget(event.target)) {
+      return
+    }
+
+    event.preventDefault()
+    event.stopPropagation()
+
+    if (!isSelected) {
+      onSelect(computedClip.timelineItemId)
+      return
+    }
+
+    moveDragStateRef.current = {
+      pointerId: event.pointerId,
+      element: event.currentTarget,
+      startClientX: event.clientX,
+      initialTimelineStart: computedClip.segmentStart,
+      moved: false,
+    }
+    previewTimelineStartRef.current = computedClip.segmentStart
+    event.currentTarget.setPointerCapture(event.pointerId)
+    onMoveDragStart(computedClip.timelineItemId, cancelMoveDrag)
+  }
+
+  const handleMovePointerMove = (event: PointerEvent<HTMLSpanElement>) => {
+    const moveDragState = moveDragStateRef.current
+
+    if (!moveDragState || moveDragState.pointerId !== event.pointerId) {
+      return
+    }
+
+    event.preventDefault()
+    event.stopPropagation()
+
+    const nextTimelineStart = getNextMoveStart(event.clientX)
+
+    moveDragState.moved = moveDragState.moved ||
+      Math.abs(nextTimelineStart - moveDragState.initialTimelineStart) >=
+        minimumTrimDuration / 2
+    previewTimelineStartRef.current = nextTimelineStart
+    setPreviewTimelineStart(nextTimelineStart)
+  }
+
   return (
     <span
       className="timeline-video-strip"
       data-selected={isSelected}
+      data-dragging={isMoveDragging ? true : undefined}
       role="button"
       tabIndex={0}
       style={{
-        left: `${geometry.timeToTimelineX(activeTrim.trimStart)}px`,
+        left: `${geometry.timeToTimelineX(displayStart)}px`,
         width: `${Math.max(
-          geometry.timeToTimelineX(activeTrim.trimEnd) -
-            geometry.timeToTimelineX(activeTrim.trimStart),
+          geometry.timeToTimelineX(displayEnd) -
+            geometry.timeToTimelineX(displayStart),
           4,
         )}px`,
       }}
+      onPointerDown={handleMovePointerDown}
+      onPointerMove={handleMovePointerMove}
+      onPointerUp={(event) => finishMoveDrag(event, true)}
+      onPointerCancel={(event) => finishMoveDrag(event, false)}
       onClick={(event) => {
         event.stopPropagation()
-        onSelect(computedClip.timelineItemId)
+        if (!moveDragStateRef.current) {
+          onSelect(computedClip.timelineItemId)
+        }
       }}
       onKeyDown={(event) => {
         if (event.key === 'Enter' || event.key === ' ') {
@@ -737,6 +956,49 @@ function normalizeTimelineSegmentTrimRange(
         trimStart: computedClip.visibleStart,
         trimEnd: computedClip.visibleEnd,
       }
+}
+
+function getNearestNonOverlappingTimelineStart(
+  requestedTimelineStart: number,
+  maxTimelineStart: number,
+  draggedClip: ComputedClip,
+  computedClips: ComputedClip[],
+) {
+  const visibleOffset = draggedClip.visibleStart - draggedClip.segmentStart
+  const draggedVisibleDuration = Math.max(
+    draggedClip.visibleEnd - draggedClip.visibleStart,
+    0,
+  )
+  const requestedVisibleStart = requestedTimelineStart + visibleOffset
+  const currentVisibleStart = draggedClip.visibleStart
+  const currentVisibleEnd = draggedClip.visibleEnd
+  const sortedSiblingRanges = computedClips
+    .filter((clip) => clip.timelineItemId !== draggedClip.timelineItemId)
+    .map((clip) => ({
+      start: clip.visibleStart,
+      end: clip.visibleEnd,
+    }))
+    .filter((range) => range.start < range.end)
+    .sort((left, right) => left.start - right.start)
+  const previousRange = sortedSiblingRanges
+    .filter((range) => range.end <= currentVisibleStart)
+    .at(-1)
+  const nextRange = sortedSiblingRanges.find(
+    (range) => range.start >= currentVisibleEnd,
+  )
+  const minVisibleStart = previousRange?.end ?? 0
+  const maxVisibleStart = nextRange
+    ? nextRange.start - draggedVisibleDuration
+    : maxTimelineStart + visibleOffset
+  const clampedVisibleStart = Math.min(
+    Math.max(requestedVisibleStart, minVisibleStart),
+    Math.max(minVisibleStart, maxVisibleStart),
+  )
+
+  return Math.min(
+    Math.max(clampedVisibleStart - visibleOffset, 0),
+    maxTimelineStart,
+  )
 }
 
 function buildTimelineTracks(

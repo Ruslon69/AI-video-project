@@ -216,6 +216,10 @@ export interface ProjectContextValue extends CentralProjectState {
     relativeStart: number,
     relativeEnd: number,
   ) => void
+  applyMoveOperation: (
+    timelineItemId: string,
+    timelineStart: number,
+  ) => void
   undo: () => void
   redo: () => void
 }

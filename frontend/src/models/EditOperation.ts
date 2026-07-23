@@ -2,6 +2,7 @@ export type EditOperationType =
   | 'trim'
   | 'split'
   | 'delete'
+  | 'move'
   | 'review-decision'
   | 'speed'
   | 'text-overlay'
@@ -56,6 +57,14 @@ export interface SplitOperation {
   createdAt: string
 }
 
+export interface MoveOperation {
+  id: string
+  type: 'move'
+  timelineItemId: string
+  timelineStart: number
+  createdAt: string
+}
+
 export interface SpeedOperationParameters {
   playbackRate: number
   preservePitch: boolean
@@ -99,6 +108,7 @@ export type EditOperation =
   | TrimOperation
   | SplitOperation
   | DeleteOperation
+  | MoveOperation
   | ReviewDecisionOperation
   | SpeedOperation
   | TextOverlayOperation

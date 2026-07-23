@@ -59,6 +59,7 @@ type VideoWorkspaceProps = {
     itemDuration: number,
   ) => void
   onSplitCommit: (timelineItemId: string, splitTime: number) => void
+  onMoveCommit: (timelineItemId: string, timelineStart: number) => void
 }
 
 // Coordinates active media preview, player seeking, timeline display, and analysis summaries.
@@ -82,6 +83,7 @@ export function VideoWorkspace({
   onTimelineZoomChange,
   onTrimCommit,
   onSplitCommit,
+  onMoveCommit,
 }: VideoWorkspaceProps) {
   return (
     <section className="video-workspace" aria-label="Видеоплеер">
@@ -113,6 +115,7 @@ export function VideoWorkspace({
         onTimelineZoomChange={onTimelineZoomChange}
         onTrimCommit={onTrimCommit}
         onSplitCommit={onSplitCommit}
+        onMoveCommit={onMoveCommit}
       />
       <p className="workspace-file">
         Активный подэтап: {selectedSubstage.title}
@@ -143,6 +146,7 @@ function MediaPreview({
   onTimelineZoomChange,
   onTrimCommit,
   onSplitCommit,
+  onMoveCommit,
 }: {
   item: MediaItem | null
   aiSuggestions: AISuggestion[]
@@ -169,6 +173,7 @@ function MediaPreview({
     itemDuration: number,
   ) => void
   onSplitCommit: (timelineItemId: string, splitTime: number) => void
+  onMoveCommit: (timelineItemId: string, timelineStart: number) => void
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const animationFrameRef = useRef<number | null>(null)
@@ -419,6 +424,7 @@ function MediaPreview({
             onZoomChange={onTimelineZoomChange}
             onTrimCommit={onTrimCommit}
             onSplitCommit={onSplitCommit}
+            onMoveCommit={onMoveCommit}
           />
         ) : null}
         <VideoFilmstrip
