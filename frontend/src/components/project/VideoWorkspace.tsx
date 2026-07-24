@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import type {
   AISuggestion,
   EditingSubstage,
@@ -6,10 +6,7 @@ import type {
   ProjectOutputSettings,
   VideoMetadata,
 } from '../../types'
-import {
-  normalizePlaybackTime,
-  type ComputedClip,
-} from '../../selectors/editProjection'
+import type { ComputedClip } from '../../selectors/editProjection'
 import type {
   SeekRequest,
   SeekRequestReason,
@@ -19,6 +16,7 @@ import {
   formatDuration,
   formatFileSize,
   formatNumber,
+  formatPlaybackTime,
 } from '../../utils/mediaFormat'
 import {
   getSourceOrientation,
@@ -28,8 +26,13 @@ import { hasPlayableSource } from '../../utils/mediaSource'
 import { statusLabels } from '../../utils/projectState'
 import { VideoTimeline } from '../timeline/VideoTimeline'
 import type { TimelineZoomState } from '../../timeline/TimelineViewportState'
-
-const PLAYHEAD_UPDATE_EPSILON_SECONDS = 1 / 60
+import {
+  usePlaybackControls,
+  usePlaybackEngine,
+  usePlaybackState,
+} from '../../playback/PlaybackStore'
+import { createPlaybackTimeline } from '../../playback/PlaybackTimeline'
+import { createHTMLMediaPlaybackAdapter } from '../../playback/HTMLMediaPlaybackAdapter'
 
 type VideoWorkspaceProps = {
   activeItem: MediaItem | null
@@ -40,17 +43,11 @@ type VideoWorkspaceProps = {
   selectedAISuggestionIds: string[]
   activeAISuggestionId: string | null
   selectedTimelineItemId: string | null
-  reportedPlaybackPosition: number
   seekRequest: SeekRequest | null
   timelineZoom: TimelineZoomState
   onReconnectSource: () => void
   onAISuggestionActivate: (suggestionId: string) => void
   onTimelineItemSelect: (timelineItemId: string | null) => void
-  onPlaybackPositionReport: (timestamp: number) => void
-  onSeekRequest: (
-    timestamp: number,
-    reason: SeekRequestReason,
-  ) => void
   onTimelineZoomChange: (level: number) => void
   onTrimCommit: (
     timelineItemId: string,
@@ -72,14 +69,11 @@ export function VideoWorkspace({
   selectedAISuggestionIds,
   activeAISuggestionId,
   selectedTimelineItemId,
-  reportedPlaybackPosition,
   seekRequest,
   timelineZoom,
   onReconnectSource,
   onAISuggestionActivate,
   onTimelineItemSelect,
-  onPlaybackPositionReport,
-  onSeekRequest,
   onTimelineZoomChange,
   onTrimCommit,
   onSplitCommit,
@@ -104,14 +98,11 @@ export function VideoWorkspace({
         selectedAISuggestionIds={selectedAISuggestionIds}
         activeAISuggestionId={activeAISuggestionId}
         selectedTimelineItemId={selectedTimelineItemId}
-        reportedPlaybackPosition={reportedPlaybackPosition}
         seekRequest={seekRequest}
         timelineZoom={timelineZoom}
         onReconnectSource={onReconnectSource}
         onAISuggestionActivate={onAISuggestionActivate}
         onTimelineItemSelect={onTimelineItemSelect}
-        onPlaybackPositionReport={onPlaybackPositionReport}
-        onSeekRequest={onSeekRequest}
         onTimelineZoomChange={onTimelineZoomChange}
         onTrimCommit={onTrimCommit}
         onSplitCommit={onSplitCommit}
@@ -135,14 +126,11 @@ function MediaPreview({
   selectedAISuggestionIds,
   activeAISuggestionId,
   selectedTimelineItemId,
-  reportedPlaybackPosition,
   seekRequest,
   timelineZoom,
   onReconnectSource,
   onAISuggestionActivate,
   onTimelineItemSelect,
-  onPlaybackPositionReport,
-  onSeekRequest,
   onTimelineZoomChange,
   onTrimCommit,
   onSplitCommit,
@@ -154,17 +142,11 @@ function MediaPreview({
   selectedAISuggestionIds: string[]
   activeAISuggestionId: string | null
   selectedTimelineItemId: string | null
-  reportedPlaybackPosition: number
   seekRequest: SeekRequest | null
   timelineZoom: TimelineZoomState
   onReconnectSource: () => void
   onAISuggestionActivate: (suggestionId: string) => void
   onTimelineItemSelect: (timelineItemId: string | null) => void
-  onPlaybackPositionReport: (timestamp: number) => void
-  onSeekRequest: (
-    timestamp: number,
-    reason: SeekRequestReason,
-  ) => void
   onTimelineZoomChange: (level: number) => void
   onTrimCommit: (
     timelineItemId: string,
@@ -175,187 +157,55 @@ function MediaPreview({
   onSplitCommit: (timelineItemId: string, splitTime: number) => void
   onMoveCommit: (timelineItemId: string, timelineStart: number) => void
 }) {
-  const videoRef = useRef<HTMLVideoElement | null>(null)
-  const animationFrameRef = useRef<number | null>(null)
-  const computedClipsRef = useRef(computedClips)
-  const reportedPlaybackPositionRef = useRef(reportedPlaybackPosition)
+  const playbackEngine = usePlaybackEngine()
+  const playbackControls = usePlaybackControls()
   const [videoDuration, setVideoDuration] = useState(0)
-  useEffect(() => {
-    computedClipsRef.current = computedClips
-  }, [computedClips])
-
-  useEffect(() => {
-    reportedPlaybackPositionRef.current = reportedPlaybackPosition
-  }, [reportedPlaybackPosition])
-
-  const stopPlayheadUpdates = useCallback(() => {
-    if (animationFrameRef.current !== null) {
-      window.cancelAnimationFrame(animationFrameRef.current)
-      animationFrameRef.current = null
-    }
-  }, [])
-
-  const syncPlaybackState = useCallback(() => {
-    const video = videoRef.current
-    if (!video) {
-      return
-    }
-    const normalizedPlaybackTime = normalizePlaybackTime(
-      computedClipsRef.current,
-      video.currentTime,
-    )
-
-    if (video.currentTime !== normalizedPlaybackTime.time) {
-      video.currentTime = normalizedPlaybackTime.time
-    }
-    if (!normalizedPlaybackTime.isPlayable) {
-      video.pause()
-      stopPlayheadUpdates()
-    }
-    onPlaybackPositionReport(normalizedPlaybackTime.time)
-    setVideoDuration(Number.isFinite(video.duration) ? video.duration : 0)
-  }, [onPlaybackPositionReport, stopPlayheadUpdates])
-
-  const startPlayheadUpdates = useCallback(() => {
-    stopPlayheadUpdates()
-    const video = videoRef.current
-    const initialPlaybackTime = normalizePlaybackTime(
-      computedClipsRef.current,
-      video?.currentTime ?? reportedPlaybackPositionRef.current,
-    )
-
-    if (!video || !initialPlaybackTime.isPlayable) {
-      if (video) {
-        video.pause()
-        video.currentTime = initialPlaybackTime.time
-      }
-      onPlaybackPositionReport(initialPlaybackTime.time)
-      return
-    }
-
-    const update = () => {
-      const video = videoRef.current
-      if (!video || video.paused || video.ended) {
-        animationFrameRef.current = null
-        return
-      }
-
-      const nextPlaybackTime = normalizePlaybackTime(
-        computedClipsRef.current,
-        video.currentTime,
+  const playbackTimeline = useMemo(
+    () =>
+      createPlaybackTimeline(
+        computedClips,
+        videoDuration || item?.metadata?.duration || 0,
+      ),
+    [computedClips, item?.metadata?.duration, videoDuration],
+  )
+  const handleVideoRef = useCallback(
+    (video: HTMLVideoElement | null) => {
+      playbackEngine.attachMedia(
+        video ? createHTMLMediaPlaybackAdapter(video) : null,
       )
-
-      if (!nextPlaybackTime.isPlayable) {
-        video.pause()
-        video.currentTime = nextPlaybackTime.time
-        onPlaybackPositionReport(nextPlaybackTime.time)
-        animationFrameRef.current = null
-        return
-      }
-
-      if (nextPlaybackTime.time !== video.currentTime) {
-        video.currentTime = nextPlaybackTime.time
-        onPlaybackPositionReport(nextPlaybackTime.time)
-      } else if (
-        Math.abs(reportedPlaybackPositionRef.current - video.currentTime) >=
-          PLAYHEAD_UPDATE_EPSILON_SECONDS
-      ) {
-        onPlaybackPositionReport(nextPlaybackTime.time)
-      }
-      animationFrameRef.current = window.requestAnimationFrame(update)
-    }
-
-    animationFrameRef.current = window.requestAnimationFrame(update)
-  }, [onPlaybackPositionReport, stopPlayheadUpdates])
-
-  const applySeekRequest = useCallback((timestamp: number) => {
-    const video = videoRef.current
-    const duration = video && Number.isFinite(video.duration)
-      ? video.duration
-      : item?.metadata?.duration ?? 0
-    const normalizedPlaybackTime = normalizePlaybackTime(
-      computedClipsRef.current,
-      Math.min(Math.max(timestamp, 0), Math.max(duration, 0)),
-    )
-
-    if (video) {
-      video.currentTime = normalizedPlaybackTime.time
-      if (!normalizedPlaybackTime.isPlayable) {
-        video.pause()
-        stopPlayheadUpdates()
-      }
-    }
-
-    onPlaybackPositionReport(normalizedPlaybackTime.time)
-  }, [
-    item?.metadata?.duration,
-    onPlaybackPositionReport,
-    stopPlayheadUpdates,
-  ])
+    },
+    [playbackEngine],
+  )
+  const handleVideoMetadata = useCallback(
+    (video: HTMLVideoElement) => {
+      setVideoDuration(Number.isFinite(video.duration) ? video.duration : 0)
+      playbackEngine.synchronizeMedia(true)
+    },
+    [playbackEngine],
+  )
+  const handleSeekRequest = useCallback(
+    (timestamp: number) => playbackControls.seek(timestamp),
+    [playbackControls],
+  )
 
   useEffect(() => {
-    stopPlayheadUpdates()
-    const firstComputedClip = computedClipsRef.current[0] ?? null
-    const resetPlaybackTime = normalizePlaybackTime(
-      computedClipsRef.current,
-      firstComputedClip?.visibleStart ?? 0,
-    )
+    playbackEngine.configureTimeline(playbackTimeline)
+  }, [playbackEngine, playbackTimeline])
 
-    if (videoRef.current) {
-      videoRef.current.currentTime = resetPlaybackTime.time
-      if (!resetPlaybackTime.isPlayable) {
-        videoRef.current.pause()
-      }
-    }
-    onPlaybackPositionReport(resetPlaybackTime.time)
+  useEffect(() => {
+    playbackControls.stop()
     setVideoDuration(item?.metadata?.duration ?? 0)
-
-    return stopPlayheadUpdates
   }, [
     item?.id,
     item?.metadata?.duration,
-    onPlaybackPositionReport,
-    stopPlayheadUpdates,
+    playbackControls,
   ])
 
   useEffect(() => {
     if (seekRequest) {
-      applySeekRequest(seekRequest.timelineTime)
+      playbackControls.seek(seekRequest.timelineTime)
     }
-  }, [applySeekRequest, seekRequest])
-
-  useEffect(() => {
-    const video = videoRef.current
-
-    if (!video) {
-      return
-    }
-
-    const normalizedPlaybackTime = normalizePlaybackTime(
-      computedClips,
-      video.currentTime,
-    )
-
-    if (video.currentTime !== normalizedPlaybackTime.time) {
-      video.currentTime = normalizedPlaybackTime.time
-      onPlaybackPositionReport(normalizedPlaybackTime.time)
-    }
-
-    if (!normalizedPlaybackTime.isPlayable) {
-      video.pause()
-      stopPlayheadUpdates()
-      return
-    }
-
-    if (!video.paused && animationFrameRef.current === null) {
-      startPlayheadUpdates()
-    }
-  }, [
-    computedClips,
-    onPlaybackPositionReport,
-    startPlayheadUpdates,
-    stopPlayheadUpdates,
-  ])
+  }, [playbackControls, seekRequest])
 
   if (!item) {
     return (
@@ -383,22 +233,18 @@ function MediaPreview({
           {canPlayVideo ? (
             <div className="video-frame-player">
               <video
-                ref={videoRef}
+                ref={handleVideoRef}
                 className="video-player"
                 src={item.objectUrl}
-                controls
                 playsInline
                 preload="metadata"
                 poster={item.previews?.poster.data_url}
-                onLoadedMetadata={syncPlaybackState}
-                onDurationChange={syncPlaybackState}
-                onPlay={startPlayheadUpdates}
-                onPause={syncPlaybackState}
-                onEnded={() => {
-                  stopPlayheadUpdates()
-                  syncPlaybackState()
-                }}
-                onSeeked={syncPlaybackState}
+                onLoadedMetadata={(event) =>
+                  handleVideoMetadata(event.currentTarget)
+                }
+                onDurationChange={(event) =>
+                  handleVideoMetadata(event.currentTarget)
+                }
               >
                 Ваш браузер не поддерживает видео.
               </video>
@@ -408,28 +254,32 @@ function MediaPreview({
           )}
         </section>
         {canPlayVideo ? (
-          <VideoTimeline
-            item={item}
-            currentTime={reportedPlaybackPosition}
-            duration={videoDuration || item.metadata?.duration || 0}
-            aiSuggestions={aiSuggestions}
-            computedClips={computedClips}
-            selectedAISuggestionIds={selectedAISuggestionIds}
-            activeAISuggestionId={activeAISuggestionId}
-            selectedTimelineItemId={selectedTimelineItemId}
-            zoom={timelineZoom}
-            onSeekRequest={onSeekRequest}
-            onAISuggestionActivate={onAISuggestionActivate}
-            onTimelineItemSelect={onTimelineItemSelect}
-            onZoomChange={onTimelineZoomChange}
-            onTrimCommit={onTrimCommit}
-            onSplitCommit={onSplitCommit}
-            onMoveCommit={onMoveCommit}
-          />
+          <>
+            <PlaybackControls />
+            <VideoTimeline
+              item={item}
+              duration={playbackTimeline.duration}
+              aiSuggestions={aiSuggestions}
+              computedClips={computedClips}
+              selectedAISuggestionIds={selectedAISuggestionIds}
+              activeAISuggestionId={activeAISuggestionId}
+              selectedTimelineItemId={selectedTimelineItemId}
+              zoom={timelineZoom}
+              onSeekRequest={handleSeekRequest}
+              onScrubStart={playbackControls.beginScrub}
+              onScrubEnd={playbackControls.endScrub}
+              onAISuggestionActivate={onAISuggestionActivate}
+              onTimelineItemSelect={onTimelineItemSelect}
+              onZoomChange={onTimelineZoomChange}
+              onTrimCommit={onTrimCommit}
+              onSplitCommit={onSplitCommit}
+              onMoveCommit={onMoveCommit}
+            />
+          </>
         ) : null}
         <VideoFilmstrip
           item={item}
-          onSeekRequest={onSeekRequest}
+          onSeekRequest={handleSeekRequest}
         />
       </>
     )
@@ -456,6 +306,52 @@ function MediaPreview({
         <h2>{item.filename}</h2>
         <p>Аудиофайл добавлен в медиатеку. Предпросмотр доступен для видео и изображений.</p>
       </div>
+    </div>
+  )
+}
+
+function PlaybackControls() {
+  const { status, currentTime, duration } = usePlaybackState()
+  const { toggle, stop } = usePlaybackControls()
+  const isPlaying = status === 'playing'
+  const hasDuration = duration > 0
+
+  return (
+    <div
+      className="playback-transport"
+      data-playback-status={status}
+      aria-label="Playback controls"
+    >
+      <div className="playback-transport-buttons">
+        <button
+          type="button"
+          className="playback-control-button"
+          disabled={!hasDuration}
+          onClick={stop}
+          aria-label="Stop"
+          title="Stop"
+        >
+          <span aria-hidden="true">■</span>
+        </button>
+        <button
+          type="button"
+          className="playback-control-button playback-control-primary"
+          disabled={!hasDuration}
+          onClick={toggle}
+          aria-label={isPlaying ? 'Pause' : 'Play'}
+          title={isPlaying ? 'Pause (Space)' : 'Play (Space)'}
+        >
+          <span aria-hidden="true">{isPlaying ? 'Ⅱ' : '▶'}</span>
+        </button>
+      </div>
+      <output
+        className="playback-time-display"
+        aria-label="Current playback time"
+      >
+        <span>{formatPlaybackTime(currentTime)}</span>
+        <span aria-hidden="true">/</span>
+        <span>{formatPlaybackTime(duration)}</span>
+      </output>
     </div>
   )
 }

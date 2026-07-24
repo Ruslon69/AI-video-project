@@ -155,7 +155,6 @@ export interface CentralProjectState {
   activeSuggestionId: string | null
   selection: SelectionState
   selectedClipIds: string[]
-  reportedPlaybackPosition: number
   seekRequest: SeekRequest | null
   timelineViewport: TimelineViewportState
   outputSettings: ProjectOutputSettings
@@ -197,11 +196,6 @@ export interface ProjectContextValue extends CentralProjectState {
   selectTimelineItem: (timelineItemId: string | null) => void
   clearSelection: () => void
   selectClips: (clipIds: string[]) => void
-  reportPlaybackPosition: (timestamp: number) => void
-  requestSeek: (
-    timestamp: number,
-    reason: SeekRequestReason,
-  ) => void
   setTimelineZoom: (level: number) => void
   setOutputSettings: (settings: ProjectOutputSettings) => void
   applyTrimOperation: (
@@ -238,7 +232,6 @@ export const defaultProjectState: CentralProjectState = {
     selectedItemIds: [],
   },
   selectedClipIds: [],
-  reportedPlaybackPosition: 0,
   seekRequest: null,
   timelineViewport: createTimelineViewportState(),
   outputSettings: defaultProjectOutputSettings,

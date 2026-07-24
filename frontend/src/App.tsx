@@ -6,6 +6,7 @@ import { AppHeader } from './components/layout/AppHeader'
 import { ProjectSidebar } from './components/project/ProjectSidebar'
 import { VideoWorkspace } from './components/project/VideoWorkspace'
 import { ReviewPanel } from './components/review/ReviewPanel'
+import { InspectorPanel } from './components/inspector/InspectorPanel'
 import { initialProjectState } from './data/stages'
 import { helpContent } from './data/helpContent'
 import { useMediaLibrary } from './hooks/useMediaLibrary'
@@ -19,6 +20,8 @@ import {
   getFirstEnabledTimelineItem,
   getProjectedSuggestions,
 } from './selectors/editSelectors'
+import { getInspectorSelection } from './selectors/inspectorSelectors'
+import { usePlaybackControls } from './playback/PlaybackStore'
 import { checkBackendHealth } from './services/api'
 import { useProject } from './state/useProject'
 import type { ProjectOutputSettings } from './types'
@@ -57,7 +60,6 @@ function App() {
     selectedSuggestionIds,
     activeSuggestionId,
     selectedTimelineItemId,
-    reportedPlaybackPosition,
     seekRequest,
     timelineViewport,
     activateSuggestion,
@@ -66,8 +68,6 @@ function App() {
     updateSuggestionStatuses,
     selectTimelineItem,
     clearSelection,
-    reportPlaybackPosition,
-    requestSeek,
     setTimelineZoom,
     outputSettings,
     setOutputSettings,
@@ -80,6 +80,7 @@ function App() {
     undo,
     redo,
   } = useProject()
+  const { toggle: togglePlayback } = usePlaybackControls()
   const {
     items: mediaItems,
     activeItem: activeMediaItem,
@@ -130,11 +131,11 @@ function App() {
     [activeSourceClipId, editProjection],
   )
   const activeComputedClip = activeComputedClips[0] ?? getFirstComputedClip(editProjection)
-  const selectedComputedClip = selectedTimelineItemId
-    ? activeComputedClips.find(
-        (clip) => clip.timelineItemId === selectedTimelineItemId,
-      ) ?? editProjection.clipsById[selectedTimelineItemId] ?? null
-    : null
+  const inspectorSelection = useMemo(
+    () => getInspectorSelection(project, editProjection, selectedTimelineItemId),
+    [editProjection, project, selectedTimelineItemId],
+  )
+  const selectedComputedClip = inspectorSelection?.computedClip ?? null
   const reviewSuggestions = useMemo(
     () => getProjectedSuggestions(project),
     [project],
@@ -148,6 +149,19 @@ function App() {
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (isEditableShortcutTarget(event.target)) {
+        return
+      }
+
+      if (
+        event.code === 'Space' &&
+        !event.repeat &&
+        !event.metaKey &&
+        !event.ctrlKey &&
+        !event.altKey &&
+        !isInteractiveShortcutTarget(event.target)
+      ) {
+        event.preventDefault()
+        togglePlayback()
         return
       }
 
@@ -200,6 +214,7 @@ function App() {
     clearSelection,
     redo,
     selectedComputedClip,
+    togglePlayback,
     undo,
   ])
 
@@ -296,19 +311,17 @@ function App() {
             selectedAISuggestionIds={selectedSuggestionIds}
             activeAISuggestionId={activeSuggestionId}
             selectedTimelineItemId={selectedTimelineItemId}
-            reportedPlaybackPosition={reportedPlaybackPosition}
             seekRequest={seekRequest}
             timelineZoom={timelineViewport.zoom}
 	          onReconnectSource={handleReconnectMediaSource}
             onAISuggestionActivate={activateSuggestion}
             onTimelineItemSelect={selectTimelineItem}
-            onPlaybackPositionReport={reportPlaybackPosition}
-            onSeekRequest={requestSeek}
             onTimelineZoomChange={setTimelineZoom}
             onTrimCommit={applyTrimOperation}
             onSplitCommit={applySplitOperation}
             onMoveCommit={applyMoveOperation}
 	        />
+        <InspectorPanel selection={inspectorSelection} />
         <ReviewPanel
           stage={selectedStage}
           substage={selectedSubstage}
@@ -405,6 +418,11 @@ function isEditableShortcutTarget(target: EventTarget | null) {
   return Boolean(
     target.closest('input, textarea, select, [contenteditable="true"]'),
   )
+}
+
+function isInteractiveShortcutTarget(target: EventTarget | null) {
+  return target instanceof HTMLElement &&
+    Boolean(target.closest('button, a, summary'))
 }
 
 export default App

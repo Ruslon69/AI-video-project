@@ -2,12 +2,15 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.tsx'
+import { PlaybackProvider } from './playback/PlaybackProvider'
 import { ProjectProvider } from './state/ProjectContext'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <ProjectProvider>
-      <App />
-    </ProjectProvider>
+    <PlaybackProvider>
+      <ProjectProvider>
+        <App />
+      </ProjectProvider>
+    </PlaybackProvider>
   </StrictMode>,
 )

@@ -16,7 +16,6 @@ import type {
   VideoTranscriptSegment,
 } from '../../types'
 import {
-  normalizePlaybackTime,
   type ComputedClip,
   type DeleteRange,
 } from '../../selectors/editProjection'
@@ -51,10 +50,13 @@ import {
   zoomTimelineFromWheel,
   type TimelineZoomState,
 } from '../../timeline/TimelineViewportState'
+import {
+  usePlaybackEngine,
+  usePlaybackState,
+} from '../../playback/PlaybackStore'
 
 type VideoTimelineProps = {
   item: MediaItem
-  currentTime: number
   duration: number
   aiSuggestions: AISuggestion[]
   computedClips: ComputedClip[]
@@ -66,6 +68,8 @@ type VideoTimelineProps = {
     timestamp: number,
     reason: SeekRequestReason,
   ) => void
+  onScrubStart: () => void
+  onScrubEnd: () => void
   onAISuggestionActivate: (suggestionId: string) => void
   onTimelineItemSelect: (timelineItemId: string | null) => void
   onZoomChange: (level: number) => void
@@ -80,12 +84,12 @@ type VideoTimelineProps = {
 }
 
 type TimelineHeaderProps = {
-  currentTime: number
   duration: number
   zoom: TimelineZoomState
-  canSplit: boolean
+  computedClips: ComputedClip[]
+  selectedTimelineItemId: string | null
   onZoomChange: (level: number) => void
-  onSplit: () => void
+  onSplitCommit: (timelineItemId: string, splitTime: number) => void
 }
 
 type TimelineRulerProps = {
@@ -94,7 +98,7 @@ type TimelineRulerProps = {
 }
 
 type TimelinePlayheadProps = {
-  currentTime: number
+  duration: number
   geometry: TimelineGeometry
 }
 
@@ -102,7 +106,7 @@ type TimelineTrackProps = {
   track: TimelineTrackModel
   geometry: TimelineGeometry
   duration: number
-  currentTime: number
+  getCurrentTime: () => number
   computedClips: ComputedClip[]
   selectedItemId: string | null
   activeMoveDragItemId: string | null
@@ -165,7 +169,6 @@ const TIME_EPSILON = 0.0001
 // Renders timeline tracks, playhead/ruler controls, and maps media analysis into timeline blocks.
 export function VideoTimeline({
   item,
-  currentTime,
   duration,
   aiSuggestions,
   computedClips,
@@ -174,6 +177,8 @@ export function VideoTimeline({
   selectedTimelineItemId,
   zoom,
   onSeekRequest,
+  onScrubStart,
+  onScrubEnd,
   onAISuggestionActivate,
   onTimelineItemSelect,
   onZoomChange,
@@ -181,6 +186,7 @@ export function VideoTimeline({
   onSplitCommit,
   onMoveCommit,
 }: VideoTimelineProps) {
+  const playbackEngine = usePlaybackEngine()
   const scrollViewportRef = useRef<HTMLDivElement | null>(null)
   const pendingZoomAnchorRef = useRef<PendingZoomAnchor | null>(null)
   const isScrubbingRef = useRef(false)
@@ -198,7 +204,6 @@ export function VideoTimeline({
     projectedTimelineEnd,
     0,
   )
-  const clampedCurrentTime = clampTime(currentTime, safeDuration)
   const timelineContentDuration = moveDragPreviewEnd
     ? Math.max(safeDuration, moveDragPreviewEnd + DRAG_EXTENSION_PADDING_SECONDS)
     : safeDuration
@@ -214,14 +219,6 @@ export function VideoTimeline({
     () => buildTimelineTracks(item, safeDuration, aiSuggestions),
     [item, safeDuration, aiSuggestions],
   )
-  const selectedSplitTargetClip = selectedTimelineItemId
-    ? computedClips.find(
-        (clip) =>
-          clip.timelineItemId === selectedTimelineItemId &&
-          isValidSplitTime(clip, clampedCurrentTime),
-      ) ?? null
-    : null
-
   useEffect(() => {
     if (!activeMoveDragItemId) {
       return
@@ -288,7 +285,7 @@ export function VideoTimeline({
     const timestamp = rect.width > 0
       ? geometry.timelineXToTime(clientX - rect.left)
       : 0
-    onSeekRequest(normalizePlaybackTime(computedClips, timestamp).time, reason)
+    onSeekRequest(timestamp, reason)
   }
 
   const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
@@ -302,6 +299,7 @@ export function VideoTimeline({
 
     event.preventDefault()
     onTimelineItemSelect(null)
+    onScrubStart()
     isScrubbingRef.current = true
     event.currentTarget.setPointerCapture(event.pointerId)
     handleSeekFromClientX(event.clientX, event.currentTarget, 'timeline-pointer')
@@ -322,6 +320,7 @@ export function VideoTimeline({
     }
 
     isScrubbingRef.current = false
+    onScrubEnd()
 
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId)
@@ -336,10 +335,8 @@ export function VideoTimeline({
     event.preventDefault()
     const direction = event.key === 'ArrowRight' ? 1 : -1
     onSeekRequest(
-      normalizePlaybackTime(
-        computedClips,
-        clampedCurrentTime + direction * KEYBOARD_SEEK_SECONDS,
-      ).time,
+      clampTime(playbackEngine.getCurrentTime(), safeDuration) +
+        direction * KEYBOARD_SEEK_SECONDS,
       'timeline-keyboard',
     )
   }
@@ -350,10 +347,7 @@ export function VideoTimeline({
       onAISuggestionActivate(timelineItem.aiSuggestion.id)
       return
     }
-    onSeekRequest(
-      normalizePlaybackTime(computedClips, timelineItem.start).time,
-      'timeline-item',
-    )
+    onSeekRequest(timelineItem.start, 'timeline-item')
   }
 
   const handleZoomChange = useCallback((
@@ -430,19 +424,12 @@ export function VideoTimeline({
   return (
     <section className="video-timeline" aria-label="Видео таймлайн">
       <TimelineHeader
-        currentTime={clampedCurrentTime}
         duration={safeDuration}
         zoom={zoom}
-        canSplit={Boolean(selectedSplitTargetClip)}
+        computedClips={computedClips}
+        selectedTimelineItemId={selectedTimelineItemId}
         onZoomChange={handleZoomChange}
-        onSplit={() => {
-          if (selectedSplitTargetClip) {
-            onSplitCommit(
-              selectedSplitTargetClip.timelineItemId,
-              clampedCurrentTime,
-            )
-          }
-        }}
+        onSplitCommit={onSplitCommit}
       />
       <div className="timeline-body">
         <div className="timeline-label-column" aria-hidden="true">
@@ -464,13 +451,7 @@ export function VideoTimeline({
               '--timeline-end-padding-viewport-count':
                 geometry.endPaddingViewportCount,
             } as CSSProperties}
-            role="slider"
-            tabIndex={0}
             aria-label="Перемотать видео по таймлайну"
-            aria-valuemin={0}
-            aria-valuemax={Math.round(safeDuration)}
-            aria-valuenow={Math.round(clampedCurrentTime)}
-            aria-valuetext={`${formatDuration(clampedCurrentTime)} of ${formatDuration(safeDuration)}`}
             onPointerDown={handlePointerDown}
             onPointerMove={handlePointerMove}
             onPointerUp={stopScrubbing}
@@ -488,7 +469,7 @@ export function VideoTimeline({
                   track={track}
                   geometry={geometry}
                   duration={timelineContentDuration}
-                  currentTime={clampedCurrentTime}
+                  getCurrentTime={playbackEngine.getCurrentTime}
                   computedClips={computedClips}
                   selectedItemId={selectedTimelineItemId}
                   activeMoveDragItemId={activeMoveDragItemId}
@@ -511,7 +492,7 @@ export function VideoTimeline({
               geometry={geometry}
             />
             <TimelinePlayhead
-              currentTime={clampedCurrentTime}
+              duration={safeDuration}
               geometry={geometry}
             />
             <TimelineSnapGuide
@@ -582,13 +563,22 @@ function isTrimHandleTarget(target: EventTarget) {
 }
 
 function TimelineHeader({
-  currentTime,
   duration,
   zoom,
-  canSplit,
+  computedClips,
+  selectedTimelineItemId,
   onZoomChange,
-  onSplit,
+  onSplitCommit,
 }: TimelineHeaderProps) {
+  const { currentTime } = usePlaybackState()
+  const clampedCurrentTime = clampTime(currentTime, duration)
+  const selectedSplitTargetClip = selectedTimelineItemId
+    ? computedClips.find(
+        (clip) =>
+          clip.timelineItemId === selectedTimelineItemId &&
+          isValidSplitTime(clip, clampedCurrentTime),
+      ) ?? null
+    : null
   const zoomLevel = zoom.level
   const isAtMinimumZoom = zoomLevel <= timelineZoomConfig.minimum
   const isAtMaximumZoom = zoomLevel >= timelineZoomConfig.maximum
@@ -598,7 +588,7 @@ function TimelineHeader({
       <div>
         <p className="section-label">Таймлайн</p>
         <span>
-          {formatDuration(currentTime)} / {formatDuration(duration)}
+          {formatDuration(clampedCurrentTime)} / {formatDuration(duration)}
         </span>
       </div>
       <div className="timeline-zoom" aria-label="Масштаб таймлайна">
@@ -606,8 +596,15 @@ function TimelineHeader({
           <button
             type="button"
             className="timeline-action-button"
-            disabled={!canSplit}
-            onClick={onSplit}
+            disabled={!selectedSplitTargetClip}
+            onClick={() => {
+              if (selectedSplitTargetClip) {
+                onSplitCommit(
+                  selectedSplitTargetClip.timelineItemId,
+                  clampedCurrentTime,
+                )
+              }
+            }}
             aria-label="Split at playhead"
           >
             Split
@@ -676,12 +673,21 @@ function TimelineRuler({ ticks, geometry }: TimelineRulerProps) {
   )
 }
 
-function TimelinePlayhead({ currentTime, geometry }: TimelinePlayheadProps) {
+function TimelinePlayhead({ duration, geometry }: TimelinePlayheadProps) {
+  const { currentTime } = usePlaybackState()
+  const clampedCurrentTime = clampTime(currentTime, duration)
+
   return (
     <span
       className="timeline-playhead-line"
-      style={{ left: `${geometry.timeToTimelineX(currentTime)}px` }}
-      aria-hidden="true"
+      style={{ left: `${geometry.timeToTimelineX(clampedCurrentTime)}px` }}
+      role="slider"
+      tabIndex={0}
+      aria-label="Перемотать видео по таймлайну"
+      aria-valuemin={0}
+      aria-valuemax={Math.round(duration)}
+      aria-valuenow={Math.round(clampedCurrentTime)}
+      aria-valuetext={`${formatDuration(clampedCurrentTime)} of ${formatDuration(duration)}`}
     />
   )
 }
@@ -690,7 +696,7 @@ function TimelineTrack({
   track,
   geometry,
   duration,
-  currentTime,
+  getCurrentTime,
   computedClips,
   selectedItemId,
   activeMoveDragItemId,
@@ -720,7 +726,7 @@ function TimelineTrack({
                 key={computedClip.id}
                 computedClip={computedClip}
                 duration={duration}
-                currentTime={currentTime}
+                getCurrentTime={getCurrentTime}
                 geometry={geometry}
                 allComputedClips={computedClips}
                 isSelected={selectedItemId === computedClip.timelineItemId}
@@ -779,7 +785,7 @@ function TimelineTrack({
 function TimelineVideoStrip({
   computedClip,
   duration,
-  currentTime,
+  getCurrentTime,
   geometry,
   allComputedClips,
   isSelected,
@@ -795,7 +801,7 @@ function TimelineVideoStrip({
 }: {
   computedClip: ComputedClip
   duration: number
-  currentTime: number
+  getCurrentTime: () => number
   geometry: TimelineGeometry
   allComputedClips: ComputedClip[]
   isSelected: boolean
@@ -1034,7 +1040,7 @@ function TimelineVideoStrip({
       Math.max(rawTimelineStart, 0),
       computedClip,
       allComputedClips,
-      currentTime,
+      getCurrentTime(),
       geometry,
       activeSnapTargetRef.current,
     )

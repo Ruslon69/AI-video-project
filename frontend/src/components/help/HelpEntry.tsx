@@ -17,10 +17,7 @@ export function HelpEntry({
       <InfoButton
         label={`Показать справку: ${content.title}`}
         isExpanded={isOpen}
-        onClick={(event) => {
-          event.stopPropagation()
-          onOpenChange(!isOpen)
-        }}
+        onActivate={() => onOpenChange(!isOpen)}
       />
     </span>
   )

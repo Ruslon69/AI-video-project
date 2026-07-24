@@ -16,10 +16,7 @@ import {
   defaultProjectState,
   ProjectContext,
 } from './ProjectState'
-import type {
-  CentralProjectState,
-  SeekRequestReason,
-} from './ProjectState'
+import type { CentralProjectState } from './ProjectState'
 import {
   getSuggestionReviewStatus,
   normalizeTrimRange,
@@ -204,27 +201,6 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
     setProjectState((currentState) => ({
       ...currentState,
       selectedClipIds: clipIds,
-    }))
-  }, [])
-
-  const reportPlaybackPosition = useCallback((timestamp: number) => {
-    setProjectState((currentState) => ({
-      ...currentState,
-      reportedPlaybackPosition: timestamp,
-    }))
-  }, [])
-
-  const requestSeek = useCallback((
-    timestamp: number,
-    reason: SeekRequestReason,
-  ) => {
-    setProjectState((currentState) => ({
-      ...currentState,
-      seekRequest: {
-        id: (currentState.seekRequest?.id ?? 0) + 1,
-        timelineTime: timelineTime(timestamp),
-        reason,
-      },
     }))
   }, [])
 
@@ -519,8 +495,6 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
       selectTimelineItem,
       clearSelection,
       selectClips,
-      reportPlaybackPosition,
-      requestSeek,
       setTimelineZoom,
       setOutputSettings,
       applyTrimOperation,
@@ -539,8 +513,6 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
       selectTimelineItem,
       clearSelection,
       selectClips,
-      reportPlaybackPosition,
-      requestSeek,
       setTimelineZoom,
       setOutputSettings,
       applyTrimOperation,
