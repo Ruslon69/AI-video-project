@@ -27,7 +27,7 @@ import {
 import { hasPlayableSource } from '../../utils/mediaSource'
 import { statusLabels } from '../../utils/projectState'
 import { VideoTimeline } from '../timeline/VideoTimeline'
-import type { TimelineZoom } from '../timeline/timelineConstants'
+import type { TimelineZoomState } from '../../timeline/TimelineViewportState'
 
 const PLAYHEAD_UPDATE_EPSILON_SECONDS = 1 / 60
 
@@ -42,7 +42,7 @@ type VideoWorkspaceProps = {
   selectedTimelineItemId: string | null
   reportedPlaybackPosition: number
   seekRequest: SeekRequest | null
-  timelineZoom: TimelineZoom
+  timelineZoom: TimelineZoomState
   onReconnectSource: () => void
   onAISuggestionActivate: (suggestionId: string) => void
   onTimelineItemSelect: (timelineItemId: string | null) => void
@@ -51,7 +51,7 @@ type VideoWorkspaceProps = {
     timestamp: number,
     reason: SeekRequestReason,
   ) => void
-  onTimelineZoomChange: (zoom: TimelineZoom) => void
+  onTimelineZoomChange: (level: number) => void
   onTrimCommit: (
     timelineItemId: string,
     relativeStart: number,
@@ -156,7 +156,7 @@ function MediaPreview({
   selectedTimelineItemId: string | null
   reportedPlaybackPosition: number
   seekRequest: SeekRequest | null
-  timelineZoom: TimelineZoom
+  timelineZoom: TimelineZoomState
   onReconnectSource: () => void
   onAISuggestionActivate: (suggestionId: string) => void
   onTimelineItemSelect: (timelineItemId: string | null) => void
@@ -165,7 +165,7 @@ function MediaPreview({
     timestamp: number,
     reason: SeekRequestReason,
   ) => void
-  onTimelineZoomChange: (zoom: TimelineZoom) => void
+  onTimelineZoomChange: (level: number) => void
   onTrimCommit: (
     timelineItemId: string,
     relativeStart: number,

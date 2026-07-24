@@ -5,7 +5,10 @@ import type { Project, ProjectSuggestion } from '../models/Project'
 import type { Timeline } from '../models/Track'
 import type { TimelineTime } from '../models/Time'
 import type { EditOperationGroup } from '../models/EditOperation'
-import type { TimelineZoom } from '../components/timeline/timelineConstants'
+import {
+  createTimelineViewportState,
+  type TimelineViewportState,
+} from '../timeline/TimelineViewportState'
 import { defaultProjectOutputSettings } from '../utils/projectSettings'
 
 const createdAt = '2026-07-21T00:00:00.000Z'
@@ -154,7 +157,7 @@ export interface CentralProjectState {
   selectedClipIds: string[]
   reportedPlaybackPosition: number
   seekRequest: SeekRequest | null
-  timelineZoom: TimelineZoom
+  timelineViewport: TimelineViewportState
   outputSettings: ProjectOutputSettings
 }
 
@@ -199,7 +202,7 @@ export interface ProjectContextValue extends CentralProjectState {
     timestamp: number,
     reason: SeekRequestReason,
   ) => void
-  setTimelineZoom: (zoom: TimelineZoom) => void
+  setTimelineZoom: (level: number) => void
   setOutputSettings: (settings: ProjectOutputSettings) => void
   applyTrimOperation: (
     timelineItemId: string,
@@ -237,7 +240,7 @@ export const defaultProjectState: CentralProjectState = {
   selectedClipIds: [],
   reportedPlaybackPosition: 0,
   seekRequest: null,
-  timelineZoom: 100,
+  timelineViewport: createTimelineViewportState(),
   outputSettings: defaultProjectOutputSettings,
 }
 

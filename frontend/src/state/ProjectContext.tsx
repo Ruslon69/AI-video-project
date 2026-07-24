@@ -1,8 +1,8 @@
 import { useCallback, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { ProjectOutputSettings } from '../types'
-import type { TimelineZoom } from '../components/timeline/timelineConstants'
 import { timelineTime } from '../models/Time'
+import { createTimelineZoomState } from '../timeline/TimelineViewportState'
 import type {
   DeleteOperation,
   EditOperation,
@@ -228,11 +228,22 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
     }))
   }, [])
 
-  const setTimelineZoom = useCallback((zoom: TimelineZoom) => {
-    setProjectState((currentState) => ({
-      ...currentState,
-      timelineZoom: zoom,
-    }))
+  const setTimelineZoom = useCallback((level: number) => {
+    setProjectState((currentState) => {
+      const zoom = createTimelineZoomState(level)
+
+      if (zoom.level === currentState.timelineViewport.zoom.level) {
+        return currentState
+      }
+
+      return {
+        ...currentState,
+        timelineViewport: {
+          ...currentState.timelineViewport,
+          zoom,
+        },
+      }
+    })
   }, [])
 
   const setOutputSettings = useCallback((settings: ProjectOutputSettings) => {

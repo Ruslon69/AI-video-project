@@ -1084,7 +1084,7 @@ textarea:focus-visible {
 }
 
 .video-timeline {
-  --timeline-label-column-width: 82px;
+  --timeline-label-column-width: 116px;
   --timeline-ruler-height: 28px;
   --timeline-track-height: 46px;
   --timeline-track-gap: 6px;
@@ -1101,6 +1101,7 @@ textarea:focus-visible {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 12px;
 }
 
@@ -1119,7 +1120,8 @@ textarea:focus-visible {
   display: inline-flex;
   flex: 0 0 auto;
   align-items: center;
-  gap: 2px;
+  gap: 4px;
+  max-width: 100%;
   overflow: visible;
   border: 1px solid var(--border);
   border-radius: 7px;
@@ -1192,20 +1194,48 @@ textarea:focus-visible {
 }
 
 .timeline-zoom-button {
-  min-height: 28px;
+  display: inline-grid;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  place-items: center;
   border: 0;
   border-radius: 5px;
-  padding: 0 8px;
+  padding: 0;
   color: var(--text-muted);
   background: transparent;
   cursor: pointer;
-  font-size: 12px;
+  font: inherit;
+  font-size: 18px;
   font-weight: 800;
+  line-height: 1;
 }
 
-.timeline-zoom-button[data-active='true'] {
+.timeline-zoom-button:hover:not(:disabled),
+.timeline-zoom-button:focus-visible {
   color: var(--text-strong);
   background: var(--panel-strong);
+}
+
+.timeline-zoom-button:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
+.timeline-zoom-slider {
+  width: clamp(96px, 14vw, 164px);
+  height: 28px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.timeline-zoom-value {
+  width: 42px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-align: right;
 }
 
 .timeline-body {
@@ -1243,6 +1273,7 @@ textarea:focus-visible {
   color: var(--text-muted);
   font-size: 12px;
   font-weight: 800;
+  white-space: nowrap;
 }
 
 .timeline-scroll-viewport {
@@ -1250,6 +1281,7 @@ textarea:focus-visible {
   min-width: 0;
   overflow-x: auto;
   overflow-y: visible;
+  overscroll-behavior-x: contain;
   scrollbar-color: var(--border-strong) transparent;
   scrollbar-gutter: stable;
   scrollbar-width: thin;
@@ -1258,7 +1290,10 @@ textarea:focus-visible {
 .timeline-time-canvas {
   position: relative;
   display: grid;
+  box-sizing: content-box;
   min-width: 100%;
+  padding-inline-end:
+    calc(100% * var(--timeline-end-padding-viewport-count));
   gap: var(--timeline-track-gap);
   cursor: pointer;
 }

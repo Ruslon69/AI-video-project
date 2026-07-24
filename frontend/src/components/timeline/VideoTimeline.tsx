@@ -1,5 +1,13 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import type { KeyboardEvent, PointerEvent } from 'react'
+import type { CSSProperties } from 'react'
 import type {
   AISuggestion,
   MediaItem,
@@ -25,14 +33,24 @@ import type {
 } from './timelineTypes'
 import type { SeekRequestReason } from '../../state/ProjectState'
 import {
-  BASE_PIXELS_PER_SECOND,
   KEYBOARD_SEEK_SECONDS,
   SNAP_ENTER_THRESHOLD_PIXELS,
   SNAP_RELEASE_THRESHOLD_PIXELS,
   SNAP_SWITCH_MARGIN_PIXELS,
-  TIMELINE_ZOOM_OPTIONS,
+  TIMELINE_ITEM_MIN_WIDTH_PIXELS,
+  TIMELINE_RULER_TARGET_TICK_SPACING_PIXELS,
 } from './timelineConstants'
-import type { TimelineZoom } from './timelineConstants'
+import {
+  createTimelineGeometry,
+  type TimelineGeometry,
+} from '../../timeline/TimelineScale'
+import {
+  createTimelineZoomState,
+  stepTimelineZoom,
+  timelineZoomConfig,
+  zoomTimelineFromWheel,
+  type TimelineZoomState,
+} from '../../timeline/TimelineViewportState'
 
 type VideoTimelineProps = {
   item: MediaItem
@@ -43,14 +61,14 @@ type VideoTimelineProps = {
   selectedAISuggestionIds: string[]
   activeAISuggestionId: string | null
   selectedTimelineItemId: string | null
-  zoom: TimelineZoom
+  zoom: TimelineZoomState
   onSeekRequest: (
     timestamp: number,
     reason: SeekRequestReason,
   ) => void
   onAISuggestionActivate: (suggestionId: string) => void
   onTimelineItemSelect: (timelineItemId: string | null) => void
-  onZoomChange: (zoom: TimelineZoom) => void
+  onZoomChange: (level: number) => void
   onTrimCommit: (
     timelineItemId: string,
     relativeStart: number,
@@ -64,9 +82,9 @@ type VideoTimelineProps = {
 type TimelineHeaderProps = {
   currentTime: number
   duration: number
-  zoom: TimelineZoom
+  zoom: TimelineZoomState
   canSplit: boolean
-  onZoomChange: (zoom: TimelineZoom) => void
+  onZoomChange: (level: number) => void
   onSplit: () => void
 }
 
@@ -116,13 +134,6 @@ type TimelineTick = {
   isMajor: boolean
 }
 
-type TimelineGeometry = {
-  contentWidth: number
-  pixelsPerSecond: number
-  timeToTimelineX: (timestamp: number) => number
-  timelineXToTime: (coordinate: number) => number
-}
-
 type SnapGuide = {
   id: string
   timestamp: number
@@ -140,6 +151,12 @@ type ActiveSnapTarget = SnapGuide & {
 type VisibleRange = {
   start: number
   end: number
+}
+
+type PendingZoomAnchor = {
+  timestamp: number
+  viewportCoordinate: number
+  targetZoomLevel: number
 }
 
 const DRAG_EXTENSION_PADDING_SECONDS = 5
@@ -165,7 +182,7 @@ export function VideoTimeline({
   onMoveCommit,
 }: VideoTimelineProps) {
   const scrollViewportRef = useRef<HTMLDivElement | null>(null)
-  const pendingPlayheadOffsetRef = useRef<number | null>(null)
+  const pendingZoomAnchorRef = useRef<PendingZoomAnchor | null>(null)
   const isScrubbingRef = useRef(false)
   const activeMoveDragRef = useRef<{
     cancel: () => void
@@ -185,14 +202,13 @@ export function VideoTimeline({
   const timelineContentDuration = moveDragPreviewEnd
     ? Math.max(safeDuration, moveDragPreviewEnd + DRAG_EXTENSION_PADDING_SECONDS)
     : safeDuration
-  const pixelsPerSecond = getPixelsPerSecond(zoom)
   const geometry = useMemo(
-    () => createTimelineGeometry(timelineContentDuration, pixelsPerSecond),
-    [timelineContentDuration, pixelsPerSecond],
+    () => createTimelineGeometry(timelineContentDuration, zoom),
+    [timelineContentDuration, zoom],
   )
   const ticks = useMemo(
-    () => getTimelineTicks(timelineContentDuration, pixelsPerSecond),
-    [timelineContentDuration, pixelsPerSecond],
+    () => getTimelineTicks(timelineContentDuration, geometry),
+    [timelineContentDuration, geometry],
   )
   const tracks = useMemo(
     () => buildTimelineTracks(item, safeDuration, aiSuggestions),
@@ -249,17 +265,19 @@ export function VideoTimeline({
 
   useLayoutEffect(() => {
     const scrollViewport = scrollViewportRef.current
-    const playheadOffset = pendingPlayheadOffsetRef.current
+    const zoomAnchor = pendingZoomAnchorRef.current
 
-    if (!scrollViewport || playheadOffset === null) {
+    if (!scrollViewport || !zoomAnchor) {
       return
     }
 
-    const nextScrollLeft = geometry.timeToTimelineX(clampedCurrentTime) -
-      playheadOffset
-    scrollViewport.scrollLeft = Math.max(nextScrollLeft, 0)
-    pendingPlayheadOffsetRef.current = null
-  }, [clampedCurrentTime, geometry, zoom])
+    scrollViewport.scrollLeft = geometry.scrollLeftForAnchor(
+      zoomAnchor.timestamp,
+      zoomAnchor.viewportCoordinate,
+      scrollViewport.clientWidth,
+    )
+    pendingZoomAnchorRef.current = null
+  }, [geometry])
 
   const handleSeekFromClientX = (
     clientX: number,
@@ -338,16 +356,72 @@ export function VideoTimeline({
     )
   }
 
-  const handleZoomChange = (nextZoom: TimelineZoom) => {
+  const handleZoomChange = useCallback((
+    requestedLevel: number,
+    clientX?: number,
+  ) => {
     const scrollViewport = scrollViewportRef.current
+    const nextZoom = createTimelineZoomState(requestedLevel)
+    const activeZoomLevel =
+      pendingZoomAnchorRef.current?.targetZoomLevel ?? zoom.level
 
-    if (scrollViewport) {
-      pendingPlayheadOffsetRef.current =
-        geometry.timeToTimelineX(clampedCurrentTime) - scrollViewport.scrollLeft
+    if (nextZoom.level === activeZoomLevel) {
+      return
     }
 
-    onZoomChange(nextZoom)
-  }
+    if (scrollViewport) {
+      const viewportRect = scrollViewport.getBoundingClientRect()
+      const viewportWidth = scrollViewport.clientWidth
+      const requestedViewportCoordinate = clientX === undefined
+        ? viewportWidth / 2
+        : clientX - viewportRect.left
+      const viewportCoordinate = Math.min(
+        Math.max(requestedViewportCoordinate, 0),
+        viewportWidth,
+      )
+
+      pendingZoomAnchorRef.current = {
+        timestamp: geometry.viewportXToTime(viewportCoordinate, {
+          scrollLeft: scrollViewport.scrollLeft,
+          width: viewportWidth,
+        }),
+        viewportCoordinate,
+        targetZoomLevel: nextZoom.level,
+      }
+    }
+
+    onZoomChange(nextZoom.level)
+  }, [geometry, onZoomChange, zoom.level])
+
+  const handleZoomWheel = useCallback((event: globalThis.WheelEvent) => {
+    if ((!event.ctrlKey && !event.metaKey) || event.deltaY === 0) {
+      return
+    }
+
+    event.preventDefault()
+    const currentZoomLevel =
+      pendingZoomAnchorRef.current?.targetZoomLevel ?? zoom.level
+    handleZoomChange(
+      zoomTimelineFromWheel(currentZoomLevel, event.deltaY),
+      event.clientX,
+    )
+  }, [handleZoomChange, zoom.level])
+
+  useEffect(() => {
+    const scrollViewport = scrollViewportRef.current
+
+    if (!scrollViewport) {
+      return
+    }
+
+    scrollViewport.addEventListener('wheel', handleZoomWheel, {
+      passive: false,
+    })
+
+    return () => {
+      scrollViewport.removeEventListener('wheel', handleZoomWheel)
+    }
+  }, [handleZoomWheel])
 
   if (safeDuration <= 0) {
     return null
@@ -385,7 +459,11 @@ export function VideoTimeline({
         >
           <div
             className="timeline-time-canvas"
-            style={{ width: `${geometry.contentWidth}px` }}
+            style={{
+              width: `${geometry.contentWidth}px`,
+              '--timeline-end-padding-viewport-count':
+                geometry.endPaddingViewportCount,
+            } as CSSProperties}
             role="slider"
             tabIndex={0}
             aria-label="Перемотать видео по таймлайну"
@@ -484,9 +562,8 @@ function TimelineDeleteOverlays({
           style={{
             left: `${geometry.timeToTimelineX(range.start)}px`,
             width: `${Math.max(
-              geometry.timeToTimelineX(range.end) -
-                geometry.timeToTimelineX(range.start),
-              4,
+              geometry.durationToPixels(range.end - range.start),
+              TIMELINE_ITEM_MIN_WIDTH_PIXELS,
             )}px`,
           }}
         />
@@ -512,6 +589,10 @@ function TimelineHeader({
   onZoomChange,
   onSplit,
 }: TimelineHeaderProps) {
+  const zoomLevel = zoom.level
+  const isAtMinimumZoom = zoomLevel <= timelineZoomConfig.minimum
+  const isAtMaximumZoom = zoomLevel >= timelineZoomConfig.maximum
+
   return (
     <div className="video-timeline-head">
       <div>
@@ -532,18 +613,48 @@ function TimelineHeader({
             Split
           </button>
         </span>
-        {TIMELINE_ZOOM_OPTIONS.map((option) => (
+        <span
+          className="timeline-action-tooltip"
+          data-tooltip="Zoom out"
+        >
           <button
-            key={option}
             type="button"
             className="timeline-zoom-button"
-            data-active={option === zoom}
-            onClick={() => onZoomChange(option)}
-            aria-pressed={option === zoom}
+            disabled={isAtMinimumZoom}
+            onClick={() => onZoomChange(stepTimelineZoom(zoomLevel, -1))}
+            aria-label="Zoom out"
           >
-            {option}%
+            −
           </button>
-        ))}
+        </span>
+        <input
+          className="timeline-zoom-slider"
+          type="range"
+          min={timelineZoomConfig.minimum}
+          max={timelineZoomConfig.maximum}
+          step={timelineZoomConfig.sliderStep}
+          value={zoomLevel}
+          onChange={(event) => onZoomChange(Number(event.currentTarget.value))}
+          aria-label="Timeline zoom"
+          aria-valuetext={`${Math.round(zoomLevel)}%`}
+        />
+        <span
+          className="timeline-action-tooltip"
+          data-tooltip="Zoom in"
+        >
+          <button
+            type="button"
+            className="timeline-zoom-button"
+            disabled={isAtMaximumZoom}
+            onClick={() => onZoomChange(stepTimelineZoom(zoomLevel, 1))}
+            aria-label="Zoom in"
+          >
+            +
+          </button>
+        </span>
+        <output className="timeline-zoom-value">
+          {Math.round(zoomLevel)}%
+        </output>
       </div>
     </div>
   )
@@ -917,7 +1028,7 @@ function TimelineVideoStrip({
     }
 
     const rawTimelineStart = moveDragState.initialTimelineStart +
-      (clientX - moveDragState.startClientX) / geometry.pixelsPerSecond
+      geometry.pixelsToDuration(clientX - moveDragState.startClientX)
     moveDragState.lastRawTimelineStart = rawTimelineStart
     const resolvedMove = getResolvedMoveStart(
       Math.max(rawTimelineStart, 0),
@@ -993,9 +1104,8 @@ function TimelineVideoStrip({
       style={{
         left: `${geometry.timeToTimelineX(displayStart)}px`,
         width: `${Math.max(
-          geometry.timeToTimelineX(displayEnd) -
-            geometry.timeToTimelineX(displayStart),
-          4,
+          geometry.durationToPixels(displayEnd - displayStart),
+          TIMELINE_ITEM_MIN_WIDTH_PIXELS,
         )}px`,
       }}
       onPointerDown={handleMovePointerDown}
@@ -1224,8 +1334,7 @@ function getSnapCandidates(
       draggedEdge: 'start' as const,
       timelineStart: target.timestamp - visibleOffset,
       distancePixels: Math.abs(
-        geometry.timeToTimelineX(requestedVisibleStart) -
-          geometry.timeToTimelineX(target.timestamp),
+        geometry.durationToPixels(requestedVisibleStart - target.timestamp),
       ),
     },
     {
@@ -1233,8 +1342,7 @@ function getSnapCandidates(
       draggedEdge: 'end' as const,
       timelineStart: target.timestamp - visibleOffset - visibleDuration,
       distancePixels: Math.abs(
-        geometry.timeToTimelineX(requestedVisibleEnd) -
-          geometry.timeToTimelineX(target.timestamp),
+        geometry.durationToPixels(requestedVisibleEnd - target.timestamp),
       ),
     },
   ]).filter(
@@ -1428,8 +1536,8 @@ function getTimelineItemStyle(
   return {
     left: `${left}px`,
     width: `${Math.max(
-      geometry.timeToTimelineX(item.end) - geometry.timeToTimelineX(item.start),
-      4,
+      geometry.durationToPixels(item.end - item.start),
+      TIMELINE_ITEM_MIN_WIDTH_PIXELS,
     )}px`,
   }
 }
@@ -1449,32 +1557,15 @@ function getTimelineItemTitle(item: TimelineItemModel) {
   ].join('\n')
 }
 
-function getPixelsPerSecond(zoom: TimelineZoom) {
-  return BASE_PIXELS_PER_SECOND * (zoom / 100)
-}
-
-function createTimelineGeometry(
-  duration: number,
-  pixelsPerSecond: number,
-): TimelineGeometry {
-  const contentWidth = Math.max(duration * pixelsPerSecond, 1)
-
-  return {
-    contentWidth,
-    pixelsPerSecond,
-    timeToTimelineX: (timestamp) =>
-      Math.min(Math.max(timestamp * pixelsPerSecond, 0), contentWidth),
-    timelineXToTime: (coordinate) =>
-      Math.min(Math.max(coordinate, 0), contentWidth) / pixelsPerSecond,
-  }
-}
-
 function isValidSplitTime(clip: ComputedClip, timestamp: number) {
   return timestamp > clip.segmentStart && timestamp < clip.segmentEnd
 }
 
-function getTimelineTicks(duration: number, pixelsPerSecond: number): TimelineTick[] {
-  const majorInterval = getMajorTickInterval(duration, pixelsPerSecond)
+function getTimelineTicks(
+  duration: number,
+  geometry: TimelineGeometry,
+): TimelineTick[] {
+  const majorInterval = getMajorTickInterval(duration, geometry)
   const minorInterval = majorInterval / 5
   const ticks: TimelineTick[] = []
 
@@ -1503,10 +1594,15 @@ function getTimelineTicks(duration: number, pixelsPerSecond: number): TimelineTi
   return ticks
 }
 
-function getMajorTickInterval(duration: number, pixelsPerSecond: number) {
-  const targetSeconds = 92 / pixelsPerSecond
+function getMajorTickInterval(
+  duration: number,
+  geometry: TimelineGeometry,
+) {
+  const targetSeconds = geometry.pixelsToDuration(
+    TIMELINE_RULER_TARGET_TICK_SPACING_PIXELS,
+  )
   const intervals = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600]
-  const durationCap = getDurationTickCap(duration, pixelsPerSecond)
+  const durationCap = getDurationTickCap(duration, geometry)
   const interval = intervals.find((candidate) => candidate >= targetSeconds)
     ?? intervals.at(-1)
     ?? 60
@@ -1514,7 +1610,12 @@ function getMajorTickInterval(duration: number, pixelsPerSecond: number) {
   return Math.min(interval, durationCap)
 }
 
-function getDurationTickCap(duration: number, pixelsPerSecond: number) {
+function getDurationTickCap(
+  duration: number,
+  geometry: TimelineGeometry,
+) {
+  const pixelsPerSecond = geometry.durationToPixels(1)
+
   if (duration <= 30) {
     return pixelsPerSecond >= 4 ? 5 : 10
   }

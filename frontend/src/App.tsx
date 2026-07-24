@@ -59,7 +59,7 @@ function App() {
     selectedTimelineItemId,
     reportedPlaybackPosition,
     seekRequest,
-    timelineZoom,
+    timelineViewport,
     activateSuggestion,
     toggleSuggestionSelection,
     selectSuggestions,
@@ -298,7 +298,7 @@ function App() {
             selectedTimelineItemId={selectedTimelineItemId}
             reportedPlaybackPosition={reportedPlaybackPosition}
             seekRequest={seekRequest}
-            timelineZoom={timelineZoom}
+            timelineZoom={timelineViewport.zoom}
 	          onReconnectSource={handleReconnectMediaSource}
             onAISuggestionActivate={activateSuggestion}
             onTimelineItemSelect={selectTimelineItem}
