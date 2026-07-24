@@ -16,6 +16,7 @@ import type {
   VideoTranscriptSegment,
 } from '../../types'
 import {
+  canSplitComputedClipAtTime,
   type ComputedClip,
   type DeleteRange,
 } from '../../selectors/editProjection'
@@ -576,7 +577,7 @@ function TimelineHeader({
     ? computedClips.find(
         (clip) =>
           clip.timelineItemId === selectedTimelineItemId &&
-          isValidSplitTime(clip, clampedCurrentTime),
+          canSplitComputedClipAtTime(clip, clampedCurrentTime),
       ) ?? null
     : null
   const zoomLevel = zoom.level
@@ -1561,10 +1562,6 @@ function getTimelineItemTitle(item: TimelineItemModel) {
     suggestion.reason,
     `Confidence ${Math.round(suggestion.confidence * 100)}%`,
   ].join('\n')
-}
-
-function isValidSplitTime(clip: ComputedClip, timestamp: number) {
-  return timestamp > clip.segmentStart && timestamp < clip.segmentEnd
 }
 
 function getTimelineTicks(

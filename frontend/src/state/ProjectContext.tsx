@@ -9,7 +9,6 @@ import type {
   EditOperationGroup,
   MoveOperation,
   ReviewDecisionOperation,
-  SplitOperation,
   TrimOperation,
 } from '../models/EditOperation'
 import {
@@ -21,6 +20,8 @@ import {
   getSuggestionReviewStatus,
   normalizeTrimRange,
 } from '../selectors/editSelectors'
+import { buildEditProjection } from '../selectors/editProjection'
+import { createSplitOperation } from '../operations/SplitOperation'
 import {
   createOperationId,
   createOperationTimestamp,
@@ -63,6 +64,35 @@ function getSelectionState(timelineItemId: string | null) {
     primaryItemId: timelineItemId,
     selectedItemIds: timelineItemId ? [timelineItemId] : [],
   }
+}
+
+function getSplitUndoSelection(
+  timelineItemId: string | null,
+  operationGroup: EditOperationGroup,
+) {
+  return [...operationGroup.operations]
+    .reverse()
+    .reduce((selectedTimelineItemId, operation) => (
+      operation.type === 'split' &&
+      (
+        selectedTimelineItemId === operation.leftTimelineItemId ||
+        selectedTimelineItemId === operation.rightTimelineItemId
+      )
+        ? operation.timelineItemId
+        : selectedTimelineItemId
+    ), timelineItemId)
+}
+
+function getSplitRedoSelection(
+  timelineItemId: string | null,
+  operationGroup: EditOperationGroup,
+) {
+  return operationGroup.operations.reduce((selectedTimelineItemId, operation) => (
+    operation.type === 'split' &&
+    selectedTimelineItemId === operation.timelineItemId
+      ? operation.rightTimelineItemId
+      : selectedTimelineItemId
+  ), timelineItemId)
 }
 
 export function ProjectProvider({ children }: ProjectProviderProps) {
@@ -286,21 +316,30 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
     timelineItemId: string,
     splitTime: number,
   ) => {
-    if (!Number.isFinite(splitTime)) {
-      return
-    }
-
     setProjectState((currentState) => {
+      const splitTarget = buildEditProjection(currentState.project)
+        .clipsById[timelineItemId]
       const createdAt = createOperationTimestamp()
-      const splitOperation: SplitOperation = {
-        id: createOperationId('split'),
-        type: 'split',
-        timelineItemId,
-        splitTime,
-        leftTimelineItemId: createOperationId('timeline-item'),
-        rightTimelineItemId: createOperationId('timeline-item'),
-        createdAt,
+      const splitOperation = splitTarget
+        ? createSplitOperation(
+            {
+              timelineItemId: splitTarget.timelineItemId,
+              timelineRange: splitTarget.timelineRange,
+            },
+            splitTime,
+            {
+              operationId: createOperationId('split'),
+              leftTimelineItemId: createOperationId('timeline-item'),
+              rightTimelineItemId: createOperationId('timeline-item'),
+            },
+            createdAt,
+          )
+        : null
+
+      if (!splitOperation) {
+        return currentState
       }
+
       const operationGroup: EditOperationGroup = {
         actionId: createOperationId('split-action'),
         operations: [splitOperation],
@@ -312,6 +351,7 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
 
       return {
         ...currentState,
+        selection: getSelectionState(splitOperation.rightTimelineItemId),
         project: {
           ...currentState.project,
           operations: operationState.operations,
@@ -429,9 +469,14 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
         return currentState
       }
       const operationIds = new Set(operation.operations.map((item) => item.id))
+      const selectedTimelineItemId = getSplitUndoSelection(
+        currentState.selection.primaryItemId,
+        operation,
+      )
 
       return {
         ...currentState,
+        selection: getSelectionState(selectedTimelineItemId),
         project: {
           ...currentState.project,
           operations: currentState.project.operations.filter(
@@ -455,9 +500,14 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
       if (!operation) {
         return currentState
       }
+      const selectedTimelineItemId = getSplitRedoSelection(
+        currentState.selection.primaryItemId,
+        operation,
+      )
 
       return {
         ...currentState,
+        selection: getSelectionState(selectedTimelineItemId),
         project: {
           ...currentState.project,
           operations: [
