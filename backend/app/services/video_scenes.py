@@ -140,6 +140,9 @@ def _run_scene_detection(input_path: Path) -> list[float]:
     return parse_scene_timestamps(result.stderr)
 
 
+run_scene_detection = _run_scene_detection
+
+
 def _detect_video_scenes_from_content(content: bytes) -> VideoScenes:
     temp_dir: tempfile.TemporaryDirectory[str] | None = None
     try:

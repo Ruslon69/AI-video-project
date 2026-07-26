@@ -10,6 +10,11 @@ import {
   type TimelineViewportState,
 } from '../timeline/TimelineViewportState'
 import { defaultProjectOutputSettings } from '../utils/projectSettings'
+import type { ProjectMediaDescriptor } from './ProjectMedia'
+import {
+  createIdleProjectAnalysisState,
+  type ProjectAnalysis,
+} from '../analysis/models'
 
 const createdAt = '2026-07-21T00:00:00.000Z'
 
@@ -137,6 +142,11 @@ export const defaultProject: Project = {
       createdAt,
     },
   ],
+  mediaRoles: {
+    primaryAssetId: 'asset-primary-video',
+    referenceAssetId: null,
+  },
+  analysis: createIdleProjectAnalysisState(),
   timeline: defaultProjectTimeline,
   suggestions: defaultProjectSuggestions,
   operations: [],
@@ -173,6 +183,7 @@ export type SeekRequestReason =
   | 'suggestion-selection'
   | 'projection-normalization'
   | 'media-change'
+  | 'ripple-delete'
 
 export type SeekRequest = {
   id: number
@@ -198,6 +209,17 @@ export interface ProjectContextValue extends CentralProjectState {
   selectClips: (clipIds: string[]) => void
   setTimelineZoom: (level: number) => void
   setOutputSettings: (settings: ProjectOutputSettings) => void
+  registerMediaAssets: (mediaItems: ProjectMediaDescriptor[]) => void
+  updateMediaDuration: (mediaItemId: string, duration: number) => void
+  choosePrimaryMedia: (mediaItemId: string) => void
+  connectPrimaryMedia: (mediaItem: ProjectMediaDescriptor) => void
+  chooseReferenceMedia: (mediaItemId: string) => void
+  startProjectAnalysis: (sourceAssetId: string) => void
+  completeProjectAnalysis: (
+    sourceAssetId: string,
+    analysis: ProjectAnalysis,
+  ) => void
+  failProjectAnalysis: (sourceAssetId: string, message: string) => void
   applyTrimOperation: (
     timelineItemId: string,
     relativeStart: number,
@@ -207,6 +229,10 @@ export interface ProjectContextValue extends CentralProjectState {
   applySplitOperation: (
     timelineItemId: string,
     splitTime: number,
+  ) => void
+  applyRippleDeleteOperation: (
+    timelineItemId: string,
+    playheadTime: number,
   ) => void
   applyDeleteOperation: (
     timelineItemId: string,

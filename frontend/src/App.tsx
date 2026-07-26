@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import './App.css'
 import { AssistantPanel } from './components/assistant/AssistantPanel'
 import { HelpPanel } from './components/help/HelpPanel'
@@ -14,18 +14,34 @@ import { useLocalStorageState } from './hooks/useLocalStorageState'
 import { useTheme } from './hooks/useTheme'
 import {
   buildEditProjection,
-  getFirstComputedClip,
 } from './selectors/editProjection'
 import {
-  getFirstEnabledTimelineItem,
   getProjectedSuggestions,
 } from './selectors/editSelectors'
 import { getInspectorSelection } from './selectors/inspectorSelectors'
+import {
+  getMediaLibraryAssetPresentations,
+  getTimelineClipThumbnailPresentations,
+  getTimelineClipMediaPresentations,
+} from './selectors/mediaAssetSelectors'
+import { canRippleDeleteTimelineItem } from './selectors/rippleDeleteSelectors'
 import { usePlaybackControls } from './playback/PlaybackStore'
 import { checkBackendHealth } from './services/api'
 import { useProject } from './state/useProject'
-import type { ProjectOutputSettings } from './types'
+import {
+  canChoosePrimaryMedia,
+  canChooseReferenceMedia,
+  getPrimaryMediaReconnectError,
+  getPrimaryProjectMediaBinding,
+  getReferenceProjectMediaBinding,
+  type ProjectMediaDescriptor,
+} from './state/ProjectMedia'
+import { createIdleProjectAnalysisState } from './analysis/models'
+import { useProjectAnalysisPipeline } from './analysis/useProjectAnalysisPipeline'
+import { applyProjectAnalysisToPrimaryMedia } from './selectors/projectAnalysisSelectors'
+import type { MediaItem, ProjectOutputSettings } from './types'
 import { applyPlatformDefaults } from './utils/projectSettings'
+import { hasPlayableSource } from './utils/mediaSource'
 import {
   createReviewVersion,
   deleteSelectedSubstageVersion,
@@ -42,6 +58,32 @@ import {
 } from './utils/projectState'
 
 const projectStorageKey = 'ai-video-director-project-state-v2'
+const videoExtensions = new Set(['mp4', 'mov', 'm4v', 'webm', 'mkv'])
+
+function isVideoFile(file: File) {
+  return file.type.startsWith('video/') ||
+    videoExtensions.has(file.name.split('.').pop()?.toLowerCase() ?? '')
+}
+
+function createProjectMediaDescriptor(mediaItem: MediaItem): ProjectMediaDescriptor {
+  return {
+    id: mediaItem.id,
+    filename: mediaItem.filename,
+    duration: mediaItem.metadata?.duration,
+    fileSize: mediaItem.size,
+    mimeType: mediaItem.file?.type || undefined,
+    lastModified: mediaItem.lastModified,
+  }
+}
+
+function createFileDescriptor(file: File): Omit<ProjectMediaDescriptor, 'id'> {
+  return {
+    filename: file.name,
+    fileSize: file.size,
+    mimeType: file.type || undefined,
+    lastModified: file.lastModified,
+  }
+}
 
 // Coordinates application-wide project, media, review, and AI suggestion state.
 function App() {
@@ -55,6 +97,11 @@ function App() {
   const [assistantDraftQuestion, setAssistantDraftQuestion] = useState('')
   const [openHelpId, setOpenHelpId] = useState<string | null>(null)
   const [isBackendConnected, setIsBackendConnected] = useState(false)
+  const [previewMode, setPreviewMode] = useState<'source' | 'timeline'>(
+    'timeline',
+  )
+  const [isPrimarySourceConnecting, setIsPrimarySourceConnecting] = useState(false)
+  const [primarySourceError, setPrimarySourceError] = useState<string | null>(null)
   const {
     project,
     selectedSuggestionIds,
@@ -69,10 +116,19 @@ function App() {
     selectTimelineItem,
     clearSelection,
     setTimelineZoom,
+    registerMediaAssets,
+    updateMediaDuration,
+    choosePrimaryMedia,
+    connectPrimaryMedia,
+    chooseReferenceMedia,
+    startProjectAnalysis,
+    completeProjectAnalysis,
+    failProjectAnalysis,
     outputSettings,
     setOutputSettings,
     applyTrimOperation,
     applySplitOperation,
+    applyRippleDeleteOperation,
     applyDeleteOperation,
     applyMoveOperation,
     canUndo,
@@ -104,47 +160,208 @@ function App() {
     () => getProjectStats(projectState.stages),
     [projectState.stages],
   )
-  const activeTimelineItem = useMemo(
-    () => getFirstEnabledTimelineItem(project),
+  const editProjection = useMemo(
+    () => buildEditProjection(project),
     [project],
   )
-  const activeSourceClipId = activeTimelineItem?.sourceId ?? null
-  const editProjection = useMemo(
-    () =>
-      buildEditProjection(project, {
-        clipDurations: activeSourceClipId
-          ? {
-              [activeSourceClipId]:
-                activeMediaItem?.metadata?.duration ?? project.timeline.duration,
-            }
-          : undefined,
-      }),
-    [activeMediaItem?.metadata?.duration, activeSourceClipId, project],
+  const primaryMediaBinding = useMemo(
+    () => getPrimaryProjectMediaBinding(project),
+    [project],
   )
-  const activeComputedClips = useMemo(
-    () =>
-      activeSourceClipId
-        ? editProjection.clips.filter(
-            (clip) => clip.sourceClipId === activeSourceClipId,
-          )
-        : [],
-    [activeSourceClipId, editProjection],
+  const referenceMediaBinding = useMemo(
+    () => getReferenceProjectMediaBinding(project),
+    [project],
   )
-  const activeComputedClip = activeComputedClips[0] ?? getFirstComputedClip(editProjection)
+  const primaryMediaItemId =
+    primaryMediaBinding?.asset.mediaItemId ?? null
+  const referenceMediaItemId =
+    referenceMediaBinding?.asset.mediaItemId ?? null
+  const primaryMediaItem = mediaItems.find(
+    (mediaItem) => mediaItem.id === primaryMediaItemId,
+  ) ?? null
+  const projectAnalysis = project.analysis ??
+    createIdleProjectAnalysisState()
+  const analyzedPrimaryMediaItem = useMemo(
+    () => applyProjectAnalysisToPrimaryMedia(
+      primaryMediaItem,
+      projectAnalysis,
+    ),
+    [primaryMediaItem, projectAnalysis],
+  )
+  const primaryCandidateItemIds = useMemo(
+    () => mediaItems
+      .filter(
+        (mediaItem) =>
+          mediaItem.type === 'video' &&
+          canChoosePrimaryMedia(project, mediaItem.id),
+      )
+      .map((mediaItem) => mediaItem.id),
+    [mediaItems, project],
+  )
+  const referenceCandidateItemIds = useMemo(
+    () => mediaItems
+      .filter(
+        (mediaItem) =>
+          mediaItem.type === 'video' &&
+          canChooseReferenceMedia(project, mediaItem.id),
+      )
+      .map((mediaItem) => mediaItem.id),
+    [mediaItems, project],
+  )
+  const timelineClipMediaPresentations = useMemo(
+    () => getTimelineClipMediaPresentations(project, editProjection),
+    [editProjection, project],
+  )
+  const timelineClipThumbnailPresentations = useMemo(
+    () => getTimelineClipThumbnailPresentations(
+      project,
+      editProjection,
+      mediaItems,
+    ),
+    [editProjection, mediaItems, project],
+  )
+  const mediaLibraryAssetPresentations = useMemo(
+    () => getMediaLibraryAssetPresentations(
+      project,
+      editProjection,
+      mediaItems.map((mediaItem) => mediaItem.id),
+    ),
+    [editProjection, mediaItems, project],
+  )
   const inspectorSelection = useMemo(
     () => getInspectorSelection(project, editProjection, selectedTimelineItemId),
     [editProjection, project, selectedTimelineItemId],
   )
   const selectedComputedClip = inspectorSelection?.computedClip ?? null
+  const canRippleDelete = useMemo(
+    () => canRippleDeleteTimelineItem(
+      project,
+      editProjection,
+      selectedTimelineItemId,
+    ),
+    [editProjection, project, selectedTimelineItemId],
+  )
   const reviewSuggestions = useMemo(
     () => getProjectedSuggestions(project),
     [project],
   )
 	  const activeHelpContent = openHelpId ? helpContent[openHelpId] : null
 
+  useProjectAnalysisPipeline({
+    sourceAssetId: primaryMediaBinding?.asset.id ?? null,
+    primaryItem: primaryMediaItem,
+    analysis: projectAnalysis,
+    onStart: startProjectAnalysis,
+    onComplete: completeProjectAnalysis,
+    onFail: failProjectAnalysis,
+  })
+
   useEffect(() => {
     void checkBackendHealth().then(setIsBackendConnected)
   }, [])
+
+  useEffect(() => {
+    registerMediaAssets(
+      mediaItems
+        .filter((mediaItem) => mediaItem.type === 'video')
+        .map(createProjectMediaDescriptor),
+    )
+  }, [mediaItems, registerMediaAssets])
+
+  useEffect(() => {
+    if (isPrimarySourceConnecting && primaryMediaItem && hasPlayableSource(primaryMediaItem)) {
+      setIsPrimarySourceConnecting(false)
+      setPrimarySourceError(null)
+    }
+  }, [isPrimarySourceConnecting, primaryMediaItem])
+
+  const handleMediaFilesAdd = useCallback((files: FileList) => {
+    if (isPrimarySourceConnecting) {
+      return
+    }
+
+    const shouldConnectPrimary = !primaryMediaItem
+    const candidateFile = Array.from(files).find(isVideoFile)
+
+    if (shouldConnectPrimary && candidateFile) {
+      const mismatchError = getPrimaryMediaReconnectError(
+        project,
+        createFileDescriptor(candidateFile),
+      )
+
+      if (mismatchError) {
+        setPrimarySourceError(mismatchError)
+        return
+      }
+
+      setIsPrimarySourceConnecting(true)
+      setPrimarySourceError(null)
+    }
+
+    const importedItems = addFiles(files)
+
+    if (!shouldConnectPrimary) {
+      return
+    }
+
+    const primaryItem = importedItems.find((item) => item.type === 'video')
+
+    if (!primaryItem) {
+      setIsPrimarySourceConnecting(false)
+      return
+    }
+
+    connectPrimaryMedia(createProjectMediaDescriptor(primaryItem))
+    selectItem(primaryItem.id)
+    setPreviewMode('timeline')
+  }, [
+    addFiles,
+    connectPrimaryMedia,
+    isPrimarySourceConnecting,
+    primaryMediaItem,
+    project,
+    selectItem,
+  ])
+
+  const handleMediaSelect = useCallback((mediaItemId: string) => {
+    selectItem(mediaItemId)
+    clearSelection()
+    setPreviewMode('source')
+  }, [clearSelection, selectItem])
+
+  const handlePrimaryMediaChoose = useCallback((mediaItemId: string) => {
+    selectItem(mediaItemId)
+    choosePrimaryMedia(mediaItemId)
+    setPreviewMode('timeline')
+  }, [choosePrimaryMedia, selectItem])
+
+  const handleReferenceMediaChoose = useCallback((mediaItemId: string) => {
+    chooseReferenceMedia(mediaItemId)
+    selectItem(mediaItemId)
+    clearSelection()
+    setPreviewMode('source')
+  }, [chooseReferenceMedia, clearSelection, selectItem])
+
+  const handleTimelineItemSelect = useCallback(
+    (timelineItemId: string | null) => {
+      selectTimelineItem(timelineItemId)
+
+      if (timelineItemId) {
+        setPreviewMode('timeline')
+        if (primaryMediaItemId) {
+          selectItem(primaryMediaItemId)
+        }
+      }
+    },
+    [primaryMediaItemId, selectItem, selectTimelineItem],
+  )
+
+  const handleTimelinePreviewRequest = useCallback(() => {
+    setPreviewMode('timeline')
+    if (primaryMediaItemId) {
+      selectItem(primaryMediaItemId)
+    }
+  }, [primaryMediaItemId, selectItem])
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -154,6 +371,7 @@ function App() {
 
       if (
         event.code === 'Space' &&
+        previewMode === 'timeline' &&
         !event.repeat &&
         !event.metaKey &&
         !event.ctrlKey &&
@@ -216,6 +434,7 @@ function App() {
     selectedComputedClip,
     togglePlayback,
     undo,
+    previewMode,
   ])
 
   const handleStageSelect = (stageId: string, substageId?: string) => {
@@ -254,9 +473,11 @@ function App() {
       )
 	  }
 
-	  const handleReconnectMediaSource = () => {
-	    document.getElementById('media-upload')?.click()
-	  }
+  const handleReconnectMediaSource = () => {
+    if (!isPrimarySourceConnecting) {
+      document.getElementById('media-upload')?.click()
+    }
+  }
 
   return (
     <div className="app-shell">
@@ -277,12 +498,24 @@ function App() {
           expandedStageIds={projectState.expandedStageIds}
           mediaItems={mediaItems}
           activeMediaItemId={activeMediaItemId}
+          primaryAsset={primaryMediaBinding?.asset ?? null}
+          referenceAsset={referenceMediaBinding?.asset ?? null}
+          primaryMediaItemId={primaryMediaItemId}
+          referenceMediaItemId={referenceMediaItemId}
+          primaryCandidateItemIds={primaryCandidateItemIds}
+          referenceCandidateItemIds={referenceCandidateItemIds}
+          analysis={projectAnalysis}
+          isPrimarySourceConnecting={isPrimarySourceConnecting}
+          primarySourceError={primarySourceError}
+          assetPresentations={mediaLibraryAssetPresentations}
           fileRejections={fileRejections}
           outputSettings={outputSettings}
           stats={stats}
           openHelpId={openHelpId}
-          onFilesAdd={addFiles}
-          onMediaSelect={selectItem}
+          onFilesAdd={handleMediaFilesAdd}
+          onMediaSelect={handleMediaSelect}
+          onPrimaryMediaChoose={handlePrimaryMediaChoose}
+          onReferenceMediaChoose={handleReferenceMediaChoose}
           onMediaRemove={removeItem}
           onMediaClear={clearLibrary}
           onOutputSettingsChange={handleOutputSettingsChange}
@@ -302,23 +535,34 @@ function App() {
             setIsAssistantOpen(true)
           }}
         />
-	        <VideoWorkspace
-            activeItem={activeMediaItem}
+			        <VideoWorkspace
+            primaryItem={analyzedPrimaryMediaItem}
+            hasPrimaryAsset={Boolean(primaryMediaBinding)}
+            sourcePreviewItem={activeMediaItem}
 	          outputSettings={outputSettings}
 	          selectedSubstage={selectedSubstage}
             aiSuggestions={reviewSuggestions}
-            computedClips={activeComputedClips.length ? activeComputedClips : activeComputedClip ? [activeComputedClip] : []}
+            computedClips={editProjection.clips}
+            clipMediaPresentations={timelineClipMediaPresentations}
+            clipThumbnailPresentations={timelineClipThumbnailPresentations}
             selectedAISuggestionIds={selectedSuggestionIds}
             activeAISuggestionId={activeSuggestionId}
             selectedTimelineItemId={selectedTimelineItemId}
+            previewMode={previewMode}
             seekRequest={seekRequest}
             timelineZoom={timelineViewport.zoom}
-	          onReconnectSource={handleReconnectMediaSource}
+		          onReconnectSource={handleReconnectMediaSource}
+            isPrimarySourceConnecting={isPrimarySourceConnecting}
+            primarySourceError={primarySourceError}
+            onTimelinePreviewRequest={handleTimelinePreviewRequest}
             onAISuggestionActivate={activateSuggestion}
-            onTimelineItemSelect={selectTimelineItem}
+            onTimelineItemSelect={handleTimelineItemSelect}
             onTimelineZoomChange={setTimelineZoom}
+            onMediaDurationChange={updateMediaDuration}
             onTrimCommit={applyTrimOperation}
             onSplitCommit={applySplitOperation}
+            canRippleDelete={canRippleDelete}
+            onRippleDeleteCommit={applyRippleDeleteOperation}
             onMoveCommit={applyMoveOperation}
 	        />
         <InspectorPanel selection={inspectorSelection} />

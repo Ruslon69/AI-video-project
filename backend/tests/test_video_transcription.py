@@ -28,7 +28,13 @@ class VideoTranscriptionMappingTests(unittest.TestCase):
         result = {
             "language": "en",
             "segments": [
-                {"id": 0, "start": 0, "end": 1.2345, "text": " Hello "},
+                {
+                    "id": 0,
+                    "start": 0,
+                    "end": 1.2345,
+                    "text": " Hello ",
+                    "avg_logprob": -0.1,
+                },
                 {"start": 1.5, "end": 2.75, "text": "world"},
             ],
         }
@@ -42,6 +48,7 @@ class VideoTranscriptionMappingTests(unittest.TestCase):
         self.assertEqual(transcription.segments[0].start, 0.0)
         self.assertEqual(transcription.segments[0].end, 1.234)
         self.assertEqual(transcription.segments[0].text, "Hello")
+        self.assertEqual(transcription.segments[0].confidence, 0.9048)
         self.assertEqual(transcription.segments[1].id, 1)
 
     def test_maps_missing_language_to_unknown(self) -> None:

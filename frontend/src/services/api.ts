@@ -4,6 +4,7 @@ import type {
   VideoScenes,
   VideoTranscription,
 } from '../types'
+import type { ProjectAnalysis } from '../analysis/models'
 
 const API_BASE_URL = 'http://127.0.0.1:8000'
 
@@ -91,6 +92,23 @@ export async function uploadVideoTranscription(
 
   return apiFetch<VideoTranscription>({
     path: '/video/transcription',
+    method: 'POST',
+    body: formData,
+    signal,
+  })
+}
+
+export async function uploadProjectAnalysis(
+  file: File,
+  sourceAssetId: string,
+  signal?: AbortSignal,
+) {
+  const formData = new FormData()
+  formData.append('file', file)
+  formData.append('source_asset_id', sourceAssetId)
+
+  return apiFetch<ProjectAnalysis>({
+    path: '/video/analysis',
     method: 'POST',
     body: formData,
     signal,

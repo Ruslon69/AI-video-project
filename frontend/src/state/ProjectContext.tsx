@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { ProjectOutputSettings } from '../types'
 import { timelineTime } from '../models/Time'
@@ -12,6 +12,7 @@ import type {
   TrimOperation,
 } from '../models/EditOperation'
 import {
+  defaultProject,
   defaultProjectState,
   ProjectContext,
 } from './ProjectState'
@@ -22,13 +23,114 @@ import {
 } from '../selectors/editSelectors'
 import { buildEditProjection } from '../selectors/editProjection'
 import { createSplitOperation } from '../operations/SplitOperation'
+import { createRippleDeleteOperation } from '../operations/RippleDeleteOperation'
+import { getRippleDeleteValidation } from '../selectors/rippleDeleteSelectors'
 import {
   createOperationId,
   createOperationTimestamp,
 } from '../utils/operationIds'
+import {
+  choosePrimaryProjectMedia,
+  chooseReferenceProjectMedia,
+  getPrimaryProjectMediaBinding,
+  reconnectPrimaryProjectMedia,
+  registerProjectMediaAssets,
+  normalizeProjectMediaRoles,
+  updateProjectMediaDuration,
+  type ProjectMediaDescriptor,
+} from './ProjectMedia'
+import { createInitialPrimaryTimelineItemOperation } from '../operations/AddTimelineItemOperation'
+import {
+  createIdleProjectAnalysisState,
+  type ProjectAnalysis,
+} from '../analysis/models'
 
 type ProjectProviderProps = {
   children: ReactNode
+}
+
+const projectStorageKey = 'ai-video-director-editor-project-v1'
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
+function restoreProjectState(value: unknown): CentralProjectState {
+  if (!isRecord(value) || !isRecord(value.project)) {
+    return defaultProjectState
+  }
+
+  const project = value.project
+
+  if (
+    !Array.isArray(project.assets) ||
+    !isRecord(project.timeline) ||
+    !Array.isArray(project.operations) ||
+    !isRecord(project.history)
+  ) {
+    return defaultProjectState
+  }
+
+  const restoredProject = normalizeProjectMediaRoles({
+    ...defaultProject,
+    ...project,
+    analysis: isRecord(project.analysis)
+      ? project.analysis as CentralProjectState['project']['analysis']
+      : createIdleProjectAnalysisState(),
+  })
+  const timelineViewport = isRecord(value.timelineViewport) &&
+    isRecord(value.timelineViewport.zoom)
+      ? value.timelineViewport as CentralProjectState['timelineViewport']
+      : defaultProjectState.timelineViewport
+
+  return {
+    ...defaultProjectState,
+    ...value,
+    project: restoredProject,
+    selectedSuggestionIds: Array.isArray(value.selectedSuggestionIds)
+      ? value.selectedSuggestionIds.filter((id): id is string => typeof id === 'string')
+      : defaultProjectState.selectedSuggestionIds,
+    activeSuggestionId: typeof value.activeSuggestionId === 'string'
+      ? value.activeSuggestionId
+      : null,
+    selection: isRecord(value.selection)
+      ? value.selection as CentralProjectState['selection']
+      : defaultProjectState.selection,
+    selectedClipIds: Array.isArray(value.selectedClipIds)
+      ? value.selectedClipIds.filter((id): id is string => typeof id === 'string')
+      : defaultProjectState.selectedClipIds,
+    seekRequest: isRecord(value.seekRequest)
+      ? value.seekRequest as CentralProjectState['seekRequest']
+      : null,
+    timelineViewport,
+    outputSettings: isRecord(value.outputSettings)
+      ? value.outputSettings as CentralProjectState['outputSettings']
+      : defaultProjectState.outputSettings,
+  }
+}
+
+function usePersistentProjectState() {
+  const [projectState, setProjectState] = useState<CentralProjectState>(() => {
+    try {
+      const storedState = window.localStorage.getItem(projectStorageKey)
+
+      return storedState
+        ? restoreProjectState(JSON.parse(storedState))
+        : defaultProjectState
+    } catch {
+      return defaultProjectState
+    }
+  })
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(projectStorageKey, JSON.stringify(projectState))
+    } catch {
+      // Browser storage is optional; the active editor state remains usable.
+    }
+  }, [projectState])
+
+  return [projectState, setProjectState] as const
 }
 
 function applyOperationGroup(
@@ -66,39 +168,157 @@ function getSelectionState(timelineItemId: string | null) {
   }
 }
 
-function getSplitUndoSelection(
+function getUndoSelection(
   timelineItemId: string | null,
   operationGroup: EditOperationGroup,
 ) {
   return [...operationGroup.operations]
     .reverse()
-    .reduce((selectedTimelineItemId, operation) => (
-      operation.type === 'split' &&
-      (
-        selectedTimelineItemId === operation.leftTimelineItemId ||
-        selectedTimelineItemId === operation.rightTimelineItemId
-      )
-        ? operation.timelineItemId
-        : selectedTimelineItemId
-    ), timelineItemId)
+    .reduce((selectedTimelineItemId, operation) => {
+      if (operation.type === 'ripple-delete') {
+        return operation.selectionBeforeTimelineItemId
+      }
+
+      if (operation.type === 'add-timeline-item') {
+        return operation.selectionBeforeTimelineItemId
+      }
+
+      return operation.type === 'split' &&
+        (
+          selectedTimelineItemId === operation.leftTimelineItemId ||
+          selectedTimelineItemId === operation.rightTimelineItemId
+        )
+          ? operation.timelineItemId
+          : selectedTimelineItemId
+    }, timelineItemId)
 }
 
-function getSplitRedoSelection(
+function getRedoSelection(
   timelineItemId: string | null,
   operationGroup: EditOperationGroup,
 ) {
-  return operationGroup.operations.reduce((selectedTimelineItemId, operation) => (
-    operation.type === 'split' &&
-    selectedTimelineItemId === operation.timelineItemId
-      ? operation.rightTimelineItemId
-      : selectedTimelineItemId
-  ), timelineItemId)
+  return operationGroup.operations.reduce((selectedTimelineItemId, operation) => {
+    if (operation.type === 'ripple-delete') {
+      return operation.selectionAfterTimelineItemId
+    }
+
+    if (operation.type === 'add-timeline-item') {
+      return operation.timelineItem.id
+    }
+
+    return operation.type === 'split' &&
+      selectedTimelineItemId === operation.timelineItemId
+        ? operation.rightTimelineItemId
+        : selectedTimelineItemId
+  }, timelineItemId)
+}
+
+function createRippleSeekRequest(
+  state: CentralProjectState,
+  timeline: number,
+) {
+  return {
+    id: (state.seekRequest?.id ?? 0) + 1,
+    timelineTime: timelineTime(timeline),
+    reason: 'ripple-delete' as const,
+  }
+}
+
+function getHistorySeekRequest(
+  state: CentralProjectState,
+  operationGroup: EditOperationGroup,
+  direction: 'undo' | 'redo',
+) {
+  const rippleOperations = operationGroup.operations.filter(
+    (operation) => operation.type === 'ripple-delete',
+  )
+  const rippleOperation = direction === 'undo'
+    ? rippleOperations[0]
+    : rippleOperations.at(-1)
+
+  return rippleOperation
+    ? createRippleSeekRequest(
+        state,
+        direction === 'undo'
+          ? rippleOperation.playheadBefore
+          : rippleOperation.playheadAfter,
+      )
+    : state.seekRequest
+}
+
+function addInitialPrimaryTimelineItem(
+  currentState: CentralProjectState,
+  project: CentralProjectState['project'],
+  clearSelection = false,
+) {
+  const primaryBinding = getPrimaryProjectMediaBinding(project)
+  const mediaItemId = primaryBinding?.asset.mediaItemId
+
+  if (!mediaItemId) {
+    return {
+      ...currentState,
+      selection: clearSelection
+        ? getSelectionState(null)
+        : currentState.selection,
+      project,
+    }
+  }
+
+  const createdAt = createOperationTimestamp()
+  const operation = createInitialPrimaryTimelineItemOperation(
+    project,
+    buildEditProjection(project),
+    mediaItemId,
+    {
+      operationId: createOperationId('add-timeline-item'),
+      timelineItemId: createOperationId('timeline-item'),
+    },
+    null,
+    createdAt,
+  )
+
+  if (!operation) {
+    return project === currentState.project
+      ? currentState
+      : {
+          ...currentState,
+          selection: clearSelection
+            ? getSelectionState(null)
+            : currentState.selection,
+          project,
+        }
+  }
+
+  const operationGroup: EditOperationGroup = {
+    actionId: createOperationId('add-timeline-item-action'),
+    operations: [operation],
+  }
+  const operationState = applyOperationGroup(
+    project.operations,
+    operationGroup,
+  )
+
+  return {
+    ...currentState,
+    selection: getSelectionState(operation.timelineItem.id),
+    project: {
+      ...project,
+      operations: operationState.operations,
+      history: {
+        ...project.history,
+        undoStack: [
+          ...project.history.undoStack,
+          ...operationState.undoStack,
+        ],
+        redoStack: operationState.redoStack,
+      },
+      updatedAt: createdAt,
+    },
+  }
 }
 
 export function ProjectProvider({ children }: ProjectProviderProps) {
-  const [projectState, setProjectState] = useState<CentralProjectState>(
-    defaultProjectState,
-  )
+  const [projectState, setProjectState] = usePersistentProjectState()
 
   const activateSuggestion = useCallback((suggestionId: string) => {
     setProjectState((currentState) => ({
@@ -109,7 +329,7 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
         activeSuggestionId: suggestionId,
         seekRequest: createSuggestionSeekRequest(currentState, suggestionId),
     }))
-  }, [])
+  }, [setProjectState])
 
   const toggleSuggestionSelection = useCallback((suggestionId: string) => {
     setProjectState((currentState) => ({
@@ -120,7 +340,7 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
       activeSuggestionId: suggestionId,
       seekRequest: createSuggestionSeekRequest(currentState, suggestionId),
     }))
-  }, [])
+  }, [setProjectState])
 
   const selectSuggestions = useCallback((suggestionIds: string[]) => {
     const activeSuggestionId = suggestionIds[0] ?? null
@@ -131,7 +351,7 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
       activeSuggestionId,
       seekRequest: createSuggestionSeekRequest(currentState, activeSuggestionId),
     }))
-  }, [])
+  }, [setProjectState])
 
   const updateSuggestionStatuses = useCallback((
     suggestionIds: string[],
@@ -211,28 +431,28 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
         },
       }
     })
-  }, [])
+  }, [setProjectState])
 
   const selectTimelineItem = useCallback((timelineItemId: string | null) => {
     setProjectState((currentState) => ({
       ...currentState,
       selection: getSelectionState(timelineItemId),
     }))
-  }, [])
+  }, [setProjectState])
 
   const clearSelection = useCallback(() => {
     setProjectState((currentState) => ({
       ...currentState,
       selection: getSelectionState(null),
     }))
-  }, [])
+  }, [setProjectState])
 
   const selectClips = useCallback((clipIds: string[]) => {
     setProjectState((currentState) => ({
       ...currentState,
       selectedClipIds: clipIds,
     }))
-  }, [])
+  }, [setProjectState])
 
   const setTimelineZoom = useCallback((level: number) => {
     setProjectState((currentState) => {
@@ -250,7 +470,7 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
         },
       }
     })
-  }, [])
+  }, [setProjectState])
 
   const setOutputSettings = useCallback((settings: ProjectOutputSettings) => {
     setProjectState((currentState) => ({
@@ -261,7 +481,224 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
         updatedAt: createOperationTimestamp(),
       },
     }))
-  }, [])
+  }, [setProjectState])
+
+  const registerMediaAssets = useCallback((
+    mediaItems: ProjectMediaDescriptor[],
+  ) => {
+    setProjectState((currentState) => {
+      const project = registerProjectMediaAssets(
+        currentState.project,
+        mediaItems,
+      )
+
+      return project === currentState.project
+        ? currentState
+        : {
+            ...currentState,
+            project,
+          }
+    })
+  }, [setProjectState])
+
+  const choosePrimaryMedia = useCallback((mediaItemId: string) => {
+    setProjectState((currentState) => {
+      const previousPrimaryAssetId =
+        getPrimaryProjectMediaBinding(currentState.project)?.asset.id ?? null
+      let project = choosePrimaryProjectMedia(
+        currentState.project,
+        mediaItemId,
+      )
+      const nextPrimaryAssetId =
+        getPrimaryProjectMediaBinding(project)?.asset.id ?? null
+
+      if (nextPrimaryAssetId !== previousPrimaryAssetId) {
+        project = {
+          ...project,
+          analysis: createIdleProjectAnalysisState(),
+        }
+      }
+
+      return addInitialPrimaryTimelineItem(
+        currentState,
+        project,
+        true,
+      )
+    })
+  }, [setProjectState])
+
+  const connectPrimaryMedia = useCallback((mediaItem: ProjectMediaDescriptor) => {
+    setProjectState((currentState) => {
+      const currentPrimary = getPrimaryProjectMediaBinding(currentState.project)
+
+      if (currentPrimary) {
+        const project = reconnectPrimaryProjectMedia(
+          currentState.project,
+          mediaItem,
+        )
+
+        return project === currentState.project
+          ? currentState
+          : {
+              ...currentState,
+              project,
+            }
+      }
+
+      let project = registerProjectMediaAssets(
+        currentState.project,
+        [mediaItem],
+      )
+      project = choosePrimaryProjectMedia(project, mediaItem.id)
+
+      return addInitialPrimaryTimelineItem(currentState, project, true)
+    })
+  }, [setProjectState])
+
+  const startProjectAnalysis = useCallback((sourceAssetId: string) => {
+    setProjectState((currentState) => {
+      const primaryAssetId =
+        getPrimaryProjectMediaBinding(currentState.project)?.asset.id ?? null
+
+      if (!sourceAssetId || sourceAssetId !== primaryAssetId) {
+        return currentState
+      }
+
+      const startedAt = createOperationTimestamp()
+
+      return {
+        ...currentState,
+        project: {
+          ...currentState.project,
+          analysis: {
+            status: 'running',
+            progress: 5,
+            sourceAssetId,
+            result: null,
+            error: null,
+            startedAt,
+            completedAt: null,
+          },
+          updatedAt: startedAt,
+        },
+      }
+    })
+  }, [setProjectState])
+
+  const completeProjectAnalysis = useCallback((
+    sourceAssetId: string,
+    analysis: ProjectAnalysis,
+  ) => {
+    setProjectState((currentState) => {
+      const primaryAssetId =
+        getPrimaryProjectMediaBinding(currentState.project)?.asset.id ?? null
+      const activeAnalysis = currentState.project.analysis
+
+      if (
+        sourceAssetId !== primaryAssetId ||
+        analysis.sourceAssetId !== sourceAssetId ||
+        activeAnalysis?.sourceAssetId !== sourceAssetId
+      ) {
+        return currentState
+      }
+
+      const completedAt = createOperationTimestamp()
+
+      return {
+        ...currentState,
+        project: {
+          ...currentState.project,
+          analysis: {
+            status: 'completed',
+            progress: 100,
+            sourceAssetId,
+            result: analysis,
+            error: null,
+            startedAt: activeAnalysis.startedAt,
+            completedAt,
+          },
+          updatedAt: completedAt,
+        },
+      }
+    })
+  }, [setProjectState])
+
+  const failProjectAnalysis = useCallback((
+    sourceAssetId: string,
+    message: string,
+  ) => {
+    setProjectState((currentState) => {
+      const primaryAssetId =
+        getPrimaryProjectMediaBinding(currentState.project)?.asset.id ?? null
+      const activeAnalysis = currentState.project.analysis
+
+      if (
+        sourceAssetId !== primaryAssetId ||
+        activeAnalysis?.sourceAssetId !== sourceAssetId
+      ) {
+        return currentState
+      }
+
+      const completedAt = createOperationTimestamp()
+
+      return {
+        ...currentState,
+        project: {
+          ...currentState.project,
+          analysis: {
+            status: 'failed',
+            progress: 0,
+            sourceAssetId,
+            result: null,
+            error: message,
+            startedAt: activeAnalysis.startedAt,
+            completedAt,
+          },
+          updatedAt: completedAt,
+        },
+      }
+    })
+  }, [setProjectState])
+
+  const chooseReferenceMedia = useCallback((mediaItemId: string) => {
+    setProjectState((currentState) => {
+      const project = chooseReferenceProjectMedia(
+        currentState.project,
+        mediaItemId,
+      )
+
+      return project === currentState.project
+        ? currentState
+        : {
+            ...currentState,
+            project,
+          }
+    })
+  }, [setProjectState])
+
+  const updateMediaDuration = useCallback((
+    mediaItemId: string,
+    duration: number,
+  ) => {
+    setProjectState((currentState) => {
+      const project = updateProjectMediaDuration(
+        currentState.project,
+        mediaItemId,
+        duration,
+      )
+      const primaryMediaItemId =
+        getPrimaryProjectMediaBinding(project)?.asset.mediaItemId
+
+      return primaryMediaItemId === mediaItemId
+        ? addInitialPrimaryTimelineItem(currentState, project)
+        : project === currentState.project
+          ? currentState
+          : {
+              ...currentState,
+              project,
+            }
+    })
+  }, [setProjectState])
 
   const applyTrimOperation = useCallback((
     timelineItemId: string,
@@ -310,7 +747,7 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
         },
       }
     })
-  }, [])
+  }, [setProjectState])
 
   const applySplitOperation = useCallback((
     timelineItemId: string,
@@ -367,7 +804,81 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
         },
       }
     })
-  }, [])
+  }, [setProjectState])
+
+  const applyRippleDeleteOperation = useCallback((
+    timelineItemId: string,
+    playheadTime: number,
+  ) => {
+    setProjectState((currentState) => {
+      if (
+        currentState.selection.primaryItemId !== timelineItemId ||
+        !Number.isFinite(playheadTime)
+      ) {
+        return currentState
+      }
+
+      const projection = buildEditProjection(currentState.project)
+      const validation = getRippleDeleteValidation(
+        currentState.project,
+        projection,
+        timelineItemId,
+      )
+
+      if (!validation.valid) {
+        return currentState
+      }
+
+      const createdAt = createOperationTimestamp()
+      const rippleDeleteOperation = createRippleDeleteOperation(
+        validation.plan,
+        {
+          operationId: createOperationId('ripple-delete'),
+          createdAt,
+          selectionBeforeTimelineItemId:
+            currentState.selection.primaryItemId,
+          playheadTime,
+        },
+      )
+
+      if (!rippleDeleteOperation) {
+        return currentState
+      }
+
+      const operationGroup: EditOperationGroup = {
+        actionId: createOperationId('ripple-delete-action'),
+        operations: [rippleDeleteOperation],
+      }
+      const operationState = applyOperationGroup(
+        currentState.project.operations,
+        operationGroup,
+      )
+
+      return {
+        ...currentState,
+        selection: getSelectionState(
+          rippleDeleteOperation.selectionAfterTimelineItemId,
+        ),
+        seekRequest: createRippleSeekRequest(
+          currentState,
+          rippleDeleteOperation.playheadAfter,
+        ),
+        project: {
+          ...currentState.project,
+          operations: operationState.operations,
+          history: {
+            ...currentState.project.history,
+            undoStack: [
+              ...currentState.project.history.undoStack,
+              ...operationState.undoStack,
+            ],
+            redoStack: operationState.redoStack,
+          },
+          updatedAt: createdAt,
+        },
+      }
+    })
+  }, [setProjectState])
 
   const applyDeleteOperation = useCallback((
     timelineItemId: string,
@@ -414,7 +925,7 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
         },
       }
     })
-  }, [])
+  }, [setProjectState])
 
   const applyMoveOperation = useCallback((
     timelineItemId: string,
@@ -459,7 +970,7 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
         },
       }
     })
-  }, [])
+  }, [setProjectState])
 
   const undo = useCallback(() => {
     setProjectState((currentState) => {
@@ -469,7 +980,7 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
         return currentState
       }
       const operationIds = new Set(operation.operations.map((item) => item.id))
-      const selectedTimelineItemId = getSplitUndoSelection(
+      const selectedTimelineItemId = getUndoSelection(
         currentState.selection.primaryItemId,
         operation,
       )
@@ -477,6 +988,11 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
       return {
         ...currentState,
         selection: getSelectionState(selectedTimelineItemId),
+        seekRequest: getHistorySeekRequest(
+          currentState,
+          operation,
+          'undo',
+        ),
         project: {
           ...currentState.project,
           operations: currentState.project.operations.filter(
@@ -491,7 +1007,7 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
         },
       }
     })
-  }, [])
+  }, [setProjectState])
 
   const redo = useCallback(() => {
     setProjectState((currentState) => {
@@ -500,7 +1016,7 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
       if (!operation) {
         return currentState
       }
-      const selectedTimelineItemId = getSplitRedoSelection(
+      const selectedTimelineItemId = getRedoSelection(
         currentState.selection.primaryItemId,
         operation,
       )
@@ -508,6 +1024,11 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
       return {
         ...currentState,
         selection: getSelectionState(selectedTimelineItemId),
+        seekRequest: getHistorySeekRequest(
+          currentState,
+          operation,
+          'redo',
+        ),
         project: {
           ...currentState.project,
           operations: [
@@ -528,7 +1049,7 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
         },
       }
     })
-  }, [])
+  }, [setProjectState])
 
   const value = useMemo(
     () => ({
@@ -547,8 +1068,17 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
       selectClips,
       setTimelineZoom,
       setOutputSettings,
+      registerMediaAssets,
+      updateMediaDuration,
+      choosePrimaryMedia,
+      connectPrimaryMedia,
+      chooseReferenceMedia,
+      startProjectAnalysis,
+      completeProjectAnalysis,
+      failProjectAnalysis,
       applyTrimOperation,
       applySplitOperation,
+      applyRippleDeleteOperation,
       applyDeleteOperation,
       applyMoveOperation,
       undo,
@@ -565,8 +1095,17 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
       selectClips,
       setTimelineZoom,
       setOutputSettings,
+      registerMediaAssets,
+      updateMediaDuration,
+      choosePrimaryMedia,
+      connectPrimaryMedia,
+      chooseReferenceMedia,
+      startProjectAnalysis,
+      completeProjectAnalysis,
+      failProjectAnalysis,
       applyTrimOperation,
       applySplitOperation,
+      applyRippleDeleteOperation,
       applyDeleteOperation,
       applyMoveOperation,
       undo,

@@ -1,6 +1,7 @@
 import asyncio
 import importlib
 import logging
+import math
 import subprocess
 import tempfile
 from pathlib import Path
@@ -124,12 +125,20 @@ def map_whisper_result(result: dict[str, Any], duration: float) -> VideoTranscri
             end = min(max(end, start), normalized_duration)
 
         text = str(segment.get("text", "")).strip()
+        try:
+            confidence = round(
+                min(max(math.exp(float(segment.get("avg_logprob"))), 0), 1),
+                4,
+            )
+        except (TypeError, ValueError, OverflowError):
+            confidence = None
         segments.append(
             VideoTranscriptSegment(
                 id=segment_id,
                 start=start,
                 end=end,
                 text=text,
+                confidence=confidence,
             ),
         )
 
@@ -150,6 +159,10 @@ def _transcribe_audio(audio_path: Path, duration: float) -> VideoTranscription:
         raise VideoTranscriptionError() from exc
 
     return map_whisper_result(result, duration)
+
+
+extract_audio = _extract_audio
+transcribe_audio = _transcribe_audio
 
 
 def _transcribe_video_content(content: bytes) -> VideoTranscription:

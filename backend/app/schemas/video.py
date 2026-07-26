@@ -42,6 +42,7 @@ class VideoTranscriptSegment(BaseModel):
     start: float
     end: float
     text: str
+    confidence: float | None = None
 
 
 class VideoTranscription(BaseModel):

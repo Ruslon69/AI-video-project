@@ -1,6 +1,9 @@
 import logging
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+
+from app.analysis.models import ProjectAnalysis
+from app.analysis.pipeline import analyze_primary_video
 
 from app.schemas.video import (
     VideoMetadata,
@@ -55,5 +58,16 @@ async def video_scenes(file: UploadFile = File(...)) -> VideoScenes:
 async def video_transcription(file: UploadFile = File(...)) -> VideoTranscription:
     try:
         return await transcribe_video(file)
+    except VideoProcessingError as exc:
+        raise _to_http_error(exc) from exc
+
+
+@router.post("/analysis", response_model=ProjectAnalysis)
+async def video_analysis(
+    source_asset_id: str = Form(...),
+    file: UploadFile = File(...),
+) -> ProjectAnalysis:
+    try:
+        return await analyze_primary_video(file, source_asset_id)
     except VideoProcessingError as exc:
         raise _to_http_error(exc) from exc

@@ -36,6 +36,18 @@ class Settings:
         0.35,
     )
     whisper_model: str = os.getenv("WHISPER_MODEL", "base")
+    analysis_timeout_seconds: int = _get_int_env(
+        "ANALYSIS_TIMEOUT_SECONDS",
+        300,
+    )
+    silence_noise_threshold_db: float = _get_float_env(
+        "SILENCE_NOISE_THRESHOLD_DB",
+        -35,
+    )
+    silence_min_duration_seconds: float = _get_float_env(
+        "SILENCE_MIN_DURATION_SECONDS",
+        0.35,
+    )
 
 
 settings = Settings()

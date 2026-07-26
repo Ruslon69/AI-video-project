@@ -1,7 +1,11 @@
+import type { TimelineItem } from './Track'
+
 export type EditOperationType =
+  | 'add-timeline-item'
   | 'trim'
   | 'split'
   | 'delete'
+  | 'ripple-delete'
   | 'move'
   | 'review-decision'
   | 'speed'
@@ -21,12 +25,36 @@ export interface DeleteOperationParameters {
   ripple: boolean
 }
 
+export interface AddTimelineItemOperation {
+  id: string
+  type: 'add-timeline-item'
+  timelineItem: TimelineItem
+  selectionBeforeTimelineItemId: string | null
+  createdAt: string
+}
+
 export interface DeleteOperation {
   id: string
   type: 'delete'
   timelineItemId: string
   relativeStart: number
   relativeEnd: number
+  createdAt: string
+}
+
+export interface RippleDeleteOperation {
+  id: string
+  type: 'ripple-delete'
+  timelineItemId: string
+  trackId: string
+  removedTimelineStart: number
+  removedTimelineEnd: number
+  shiftDuration: number
+  shiftedTimelineItemIds: string[]
+  selectionBeforeTimelineItemId: string | null
+  selectionAfterTimelineItemId: string | null
+  playheadBefore: number
+  playheadAfter: number
   createdAt: string
 }
 
@@ -105,9 +133,11 @@ export interface AudioOperation
   extends EditOperationBase<'audio', AudioOperationParameters> {}
 
 export type EditOperation =
+  | AddTimelineItemOperation
   | TrimOperation
   | SplitOperation
   | DeleteOperation
+  | RippleDeleteOperation
   | MoveOperation
   | ReviewDecisionOperation
   | SpeedOperation

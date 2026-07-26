@@ -8,6 +8,7 @@ import type {
   TargetAspectRatio,
   TargetPlatform,
 } from '../../types'
+import type { ProjectAsset } from '../../models/Project'
 import {
   customAspectRatioOptions,
   targetDurationOptions,
@@ -15,6 +16,9 @@ import {
 } from '../../utils/projectSettings'
 import { EditingStageList } from './EditingStageList'
 import { MediaLibraryList } from './MediaLibraryList'
+import type { MediaLibraryAssetPresentation } from '../../selectors/mediaAssetSelectors'
+import type { ProjectAnalysisState } from '../../analysis/models'
+import { ProjectAnalysisStatus } from './ProjectAnalysisStatus'
 
 type ProjectSidebarProps = {
   stages: EditingStage[]
@@ -23,12 +27,24 @@ type ProjectSidebarProps = {
   expandedStageIds: string[]
   mediaItems: MediaItem[]
   activeMediaItemId: string | null
+  primaryAsset: ProjectAsset | null
+  referenceAsset: ProjectAsset | null
+  primaryMediaItemId: string | null
+  referenceMediaItemId: string | null
+  primaryCandidateItemIds: string[]
+  referenceCandidateItemIds: string[]
+  analysis: ProjectAnalysisState
+  isPrimarySourceConnecting: boolean
+  primarySourceError: string | null
+  assetPresentations: Record<string, MediaLibraryAssetPresentation>
   fileRejections: MediaFileRejection[]
   outputSettings: ProjectOutputSettings
   stats: ProjectStats
   openHelpId: string | null
   onFilesAdd: (files: FileList) => void
   onMediaSelect: (itemId: string) => void
+  onPrimaryMediaChoose: (itemId: string) => void
+  onReferenceMediaChoose: (itemId: string) => void
   onMediaRemove: (itemId: string) => void
   onMediaClear: () => void
   onOutputSettingsChange: (settings: ProjectOutputSettings) => void
@@ -44,12 +60,24 @@ export function ProjectSidebar({
   expandedStageIds,
   mediaItems,
   activeMediaItemId,
+  primaryAsset,
+  referenceAsset,
+  primaryMediaItemId,
+  referenceMediaItemId,
+  primaryCandidateItemIds,
+  referenceCandidateItemIds,
+  analysis,
+  isPrimarySourceConnecting,
+  primarySourceError,
+  assetPresentations,
   fileRejections,
   outputSettings,
   stats,
   openHelpId,
   onFilesAdd,
   onMediaSelect,
+  onPrimaryMediaChoose,
+  onReferenceMediaChoose,
   onMediaRemove,
   onMediaClear,
   onOutputSettingsChange,
@@ -170,15 +198,51 @@ export function ProjectSidebar({
             Подэтапов: {stats.approvedSubstages} из {stats.totalSubstages}
           </p>
         </div>
-        <label className="upload-button" htmlFor="media-upload">
-          Добавить медиа
-        </label>
+        <div className="project-media-roles" aria-label="Project video roles">
+          <div className="project-media-role">
+            <span>Main video</span>
+            <strong>{primaryAsset?.filename ?? 'Not selected'}</strong>
+            <small>
+              {primaryMediaItemId
+                ? 'The only source used by the edit timeline.'
+                : 'Choose the video you want to edit.'}
+            </small>
+          </div>
+          <div className="project-media-role">
+            <span>Editing reference</span>
+            <strong>{referenceAsset?.filename ?? 'Optional'}</strong>
+            <small>
+              Used to learn the editing style. It will not be added to the timeline.
+            </small>
+          </div>
+        </div>
+        {primarySourceError ? (
+          <p className="project-media-role-error" role="alert">
+            {primarySourceError}
+          </p>
+        ) : null}
+        <ProjectAnalysisStatus analysis={analysis} />
+        <button
+          type="button"
+          className="upload-button"
+          disabled={isPrimarySourceConnecting}
+          onClick={() => document.getElementById('media-upload')?.click()}
+        >
+          {isPrimarySourceConnecting
+            ? 'Connecting main video...'
+            : primaryMediaItemId
+            ? referenceMediaItemId
+              ? 'Import another video'
+              : 'Add reference'
+            : 'Choose main video'}
+        </button>
         <input
           className="visually-hidden"
           id="media-upload"
           type="file"
           accept="video/*,video/quicktime,.mov,image/*,audio/*"
           multiple
+          disabled={isPrimarySourceConnecting}
           onChange={handleFileChange}
           aria-label="Выбрать медиафайлы"
         />
@@ -197,7 +261,15 @@ export function ProjectSidebar({
             type="button"
             className="ghost-button compact-button"
             onClick={handleClearLibrary}
-            disabled={mediaItems.length === 0}
+            disabled={
+              mediaItems.length === 0 ||
+              Boolean(primaryMediaItemId || referenceMediaItemId)
+            }
+            title={
+              primaryMediaItemId || referenceMediaItemId
+                ? 'Assigned project videos cannot be cleared'
+                : undefined
+            }
           >
             Очистить
           </button>
@@ -205,7 +277,14 @@ export function ProjectSidebar({
         <MediaLibraryList
           items={mediaItems}
           activeItemId={activeMediaItemId}
+          primaryMediaItemId={primaryMediaItemId}
+          referenceMediaItemId={referenceMediaItemId}
+          primaryCandidateItemIds={primaryCandidateItemIds}
+          referenceCandidateItemIds={referenceCandidateItemIds}
+          assetPresentations={assetPresentations}
           onSelect={onMediaSelect}
+          onPrimaryChoose={onPrimaryMediaChoose}
+          onReferenceChoose={onReferenceMediaChoose}
           onRemove={onMediaRemove}
         />
       </section>

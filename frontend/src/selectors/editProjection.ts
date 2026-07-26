@@ -15,6 +15,12 @@ import {
   isValidSplitPoint,
   splitTimelineItem,
 } from '../operations/SplitOperation'
+import { createTimelineItemFromAddOperation } from '../operations/AddTimelineItemOperation'
+import {
+  normalizeRippleTimelineTime,
+  RIPPLE_TIME_TOLERANCE_SECONDS,
+  shiftRippleTimelineTime,
+} from '../operations/RippleDeleteOperation'
 import {
   getDeleteOperations,
   getTrimOperations,
@@ -26,6 +32,7 @@ import {
   timelineToPlayback,
   type TimelineTimeMapping,
 } from './timeMapping'
+import { getPrimaryProjectMediaBinding } from '../state/ProjectMedia'
 
 export type DeleteRange = {
   operationId: string
@@ -49,6 +56,8 @@ export interface ComputedClip {
   visibleStart: number
   visibleEnd: number
   visibleDuration: number
+  locked: boolean
+  visible: boolean
   deletedRanges: DeleteRange[]
   playbackRanges: PlaybackRange[]
 }
@@ -83,6 +92,8 @@ export function buildEditProjection(
   project: Project,
   options: EditProjectionOptions = {},
 ): EditProjection {
+  const primarySourceClipId =
+    getPrimaryProjectMediaBinding(project)?.sourceClip.id ?? null
   const operationIndex = createOperationIndex(project)
   const sourceClipsById = new Map(
     project.timeline.tracks
@@ -90,8 +101,11 @@ export function buildEditProjection(
       .map((clip) => [clip.id, clip]),
   )
   const timelineItems = buildProjectedTimelineItems(
-    project.timeline.items,
+    project.timeline.items.filter(
+      (timelineItem) => timelineItem.sourceId === primarySourceClipId,
+    ),
     project.operations,
+    primarySourceClipId,
   )
   const clips = timelineItems.flatMap((timelineItem) => {
     const sourceClip = sourceClipsById.get(timelineItem.sourceId)
@@ -230,21 +244,31 @@ function createOperationIndex(project: Project) {
 function buildProjectedTimelineItems(
   initialTimelineItems: TimelineItem[],
   operations: EditOperation[],
+  primarySourceClipId: string | null,
 ): ProjectedTimelineItem[] {
   let timelineItems: ProjectedTimelineItem[] = initialTimelineItems.map(
-    (timelineItem) => ({
-      ...timelineItem,
-      ancestorTimelineItemIds: [timelineItem.id],
-      ancestorTimelineRangesById: {
-        [timelineItem.id]: {
-          start: timelineTime(timelineItem.timelineStart),
-          end: timelineTime(getTimelineItemEnd(timelineItem)),
-        },
-      },
-    }),
+    createProjectedTimelineItem,
   )
 
   for (const operation of operations) {
+    if (operation.type === 'add-timeline-item') {
+      if (operation.timelineItem.sourceId !== primarySourceClipId) {
+        continue
+      }
+
+      const addedTimelineItem = createTimelineItemFromAddOperation(
+        timelineItems,
+        operation,
+      )
+
+      if (addedTimelineItem) {
+        timelineItems = [
+          ...timelineItems,
+          createProjectedTimelineItem(addedTimelineItem),
+        ]
+      }
+    }
+
     if (operation.type === 'move') {
       timelineItems = timelineItems.map((timelineItem) =>
         timelineItem.id === operation.timelineItemId
@@ -279,9 +303,31 @@ function buildProjectedTimelineItems(
         ]
       })
     }
+
+    if (operation.type === 'ripple-delete') {
+      timelineItems = applyRippleDeleteOperation(
+        timelineItems,
+        operation,
+      )
+    }
   }
 
   return timelineItems
+}
+
+function createProjectedTimelineItem(
+  timelineItem: TimelineItem,
+): ProjectedTimelineItem {
+  return {
+    ...timelineItem,
+    ancestorTimelineItemIds: [timelineItem.id],
+    ancestorTimelineRangesById: {
+      [timelineItem.id]: {
+        start: timelineTime(timelineItem.timelineStart),
+        end: timelineTime(getTimelineItemEnd(timelineItem)),
+      },
+    },
+  }
 }
 
 function moveTimelineItem(
@@ -324,6 +370,78 @@ function addSplitAncestry(
         end: timelineTime(timelineEnd),
       },
     },
+  }
+}
+
+function applyRippleDeleteOperation(
+  timelineItems: ProjectedTimelineItem[],
+  operation: Extract<EditOperation, { type: 'ripple-delete' }>,
+): ProjectedTimelineItem[] {
+  const targetTimelineItem = timelineItems.find(
+    (timelineItem) => timelineItem.id === operation.timelineItemId,
+  )
+  const shiftedTimelineItemIdSet = new Set(
+    operation.shiftedTimelineItemIds,
+  )
+  const shiftedTimelineItems = timelineItems.filter((timelineItem) =>
+    shiftedTimelineItemIdSet.has(timelineItem.id),
+  )
+  const hasValidReplayTarget =
+    Boolean(targetTimelineItem) &&
+    targetTimelineItem?.trackId === operation.trackId &&
+    Number.isFinite(operation.shiftDuration) &&
+    operation.shiftDuration > RIPPLE_TIME_TOLERANCE_SECONDS &&
+    shiftedTimelineItems.length === shiftedTimelineItemIdSet.size &&
+    shiftedTimelineItems.every(
+      (timelineItem) => timelineItem.trackId === operation.trackId,
+    )
+
+  if (!hasValidReplayTarget) {
+    return timelineItems
+  }
+
+  return timelineItems
+    .filter((timelineItem) => timelineItem.id !== operation.timelineItemId)
+    .map((timelineItem) =>
+      shiftedTimelineItemIdSet.has(timelineItem.id)
+        ? shiftTimelineItemForRipple(
+            timelineItem,
+            operation.shiftDuration,
+          )
+        : timelineItem,
+    )
+}
+
+function shiftTimelineItemForRipple(
+  timelineItem: ProjectedTimelineItem,
+  shiftDuration: number,
+): ProjectedTimelineItem {
+  return {
+    ...timelineItem,
+    timelineStart: shiftRippleTimelineTime(
+      timelineItem.timelineStart,
+      shiftDuration,
+    ),
+    ancestorTimelineRangesById: Object.fromEntries(
+      Object.entries(timelineItem.ancestorTimelineRangesById)
+        .map(([timelineItemId, timelineRange]) => [
+          timelineItemId,
+          {
+            start: timelineTime(
+              shiftRippleTimelineTime(
+                timelineRange.start,
+                shiftDuration,
+              ),
+            ),
+            end: timelineTime(
+              shiftRippleTimelineTime(
+                timelineRange.end,
+                shiftDuration,
+              ),
+            ),
+          },
+        ]),
+    ),
   }
 }
 
@@ -402,6 +520,8 @@ function computeTimelineItemProjection(
     visibleStart: visibleRange.start,
     visibleEnd: visibleRange.end,
     visibleDuration: visibleRange.end - visibleRange.start,
+    locked: timelineItem.locked ?? false,
+    visible: timelineItem.visible ?? true,
     deletedRanges,
     playbackRanges,
   }
@@ -456,8 +576,12 @@ function getOperationTargetRange(
 
 function getTimelineItemRanges(timelineItem: TimelineItem): TimelineItemRanges {
   return {
-    timelineStart: timelineTime(timelineItem.timelineStart),
-    timelineEnd: timelineTime(getTimelineItemEnd(timelineItem)),
+    timelineStart: timelineTime(
+      normalizeRippleTimelineTime(timelineItem.timelineStart),
+    ),
+    timelineEnd: timelineTime(
+      normalizeRippleTimelineTime(getTimelineItemEnd(timelineItem)),
+    ),
     sourceStart: sourceTime(timelineItem.sourceStart),
     sourceEnd: sourceTime(timelineItem.sourceEnd),
   }

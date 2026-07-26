@@ -117,6 +117,7 @@ export type VideoScene = {
   start: number
   end: number
   duration: number
+  confidence?: number
 }
 
 export type VideoTranscriptSegment = {
@@ -124,6 +125,7 @@ export type VideoTranscriptSegment = {
   start: number
   end: number
   text: string
+  confidence?: number | null
 }
 
 export type VideoTranscription = {

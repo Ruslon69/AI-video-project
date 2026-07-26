@@ -11,7 +11,6 @@ import type { CSSProperties } from 'react'
 import type {
   AISuggestion,
   MediaItem,
-  VideoPreviewFrame,
   VideoScene,
   VideoTranscriptSegment,
 } from '../../types'
@@ -33,10 +32,18 @@ import type {
 } from './timelineTypes'
 import type { SeekRequestReason } from '../../state/ProjectState'
 import {
+  sampleTimelineClipThumbnailFrames,
+  type TimelineClipMediaPresentation,
+  type TimelineClipThumbnailPresentation,
+} from '../../selectors/mediaAssetSelectors'
+import {
   KEYBOARD_SEEK_SECONDS,
   SNAP_ENTER_THRESHOLD_PIXELS,
   SNAP_RELEASE_THRESHOLD_PIXELS,
   SNAP_SWITCH_MARGIN_PIXELS,
+  TIMELINE_CLIP_LABEL_COMPACT_WIDTH_PIXELS,
+  TIMELINE_CLIP_LABEL_MINIMAL_WIDTH_PIXELS,
+  TIMELINE_CLIP_THUMBNAIL_TARGET_WIDTH_PIXELS,
   TIMELINE_ITEM_MIN_WIDTH_PIXELS,
   TIMELINE_RULER_TARGET_TICK_SPACING_PIXELS,
 } from './timelineConstants'
@@ -61,6 +68,8 @@ type VideoTimelineProps = {
   duration: number
   aiSuggestions: AISuggestion[]
   computedClips: ComputedClip[]
+  clipMediaPresentations: Record<string, TimelineClipMediaPresentation>
+  clipThumbnailPresentations: Record<string, TimelineClipThumbnailPresentation>
   selectedAISuggestionIds: string[]
   activeAISuggestionId: string | null
   selectedTimelineItemId: string | null
@@ -81,6 +90,11 @@ type VideoTimelineProps = {
     itemDuration: number,
   ) => void
   onSplitCommit: (timelineItemId: string, splitTime: number) => void
+  canRippleDelete: boolean
+  onRippleDeleteCommit: (
+    timelineItemId: string,
+    playheadTime: number,
+  ) => void
   onMoveCommit: (timelineItemId: string, timelineStart: number) => void
 }
 
@@ -89,8 +103,13 @@ type TimelineHeaderProps = {
   zoom: TimelineZoomState
   computedClips: ComputedClip[]
   selectedTimelineItemId: string | null
+  canRippleDelete: boolean
   onZoomChange: (level: number) => void
   onSplitCommit: (timelineItemId: string, splitTime: number) => void
+  onRippleDeleteCommit: (
+    timelineItemId: string,
+    playheadTime: number,
+  ) => void
 }
 
 type TimelineRulerProps = {
@@ -109,6 +128,8 @@ type TimelineTrackProps = {
   duration: number
   getCurrentTime: () => number
   computedClips: ComputedClip[]
+  clipMediaPresentations: Record<string, TimelineClipMediaPresentation>
+  clipThumbnailPresentations: Record<string, TimelineClipThumbnailPresentation>
   selectedItemId: string | null
   activeMoveDragItemId: string | null
   snapGuide: SnapGuide | null
@@ -116,6 +137,7 @@ type TimelineTrackProps = {
   activeAISuggestionId: string | null
   onItemSelect: (item: TimelineItemModel) => void
   onClipSelect: (timelineItemId: string) => void
+  onClipSeek: (timestamp: number) => void
   onMoveDragStart: (
     timelineItemId: string,
     cancelMoveDrag: () => void,
@@ -173,6 +195,8 @@ export function VideoTimeline({
   duration,
   aiSuggestions,
   computedClips,
+  clipMediaPresentations,
+  clipThumbnailPresentations,
   selectedAISuggestionIds,
   activeAISuggestionId,
   selectedTimelineItemId,
@@ -185,6 +209,8 @@ export function VideoTimeline({
   onZoomChange,
   onTrimCommit,
   onSplitCommit,
+  canRippleDelete,
+  onRippleDeleteCommit,
   onMoveCommit,
 }: VideoTimelineProps) {
   const playbackEngine = usePlaybackEngine()
@@ -429,8 +455,10 @@ export function VideoTimeline({
         zoom={zoom}
         computedClips={computedClips}
         selectedTimelineItemId={selectedTimelineItemId}
+        canRippleDelete={canRippleDelete}
         onZoomChange={handleZoomChange}
         onSplitCommit={onSplitCommit}
+        onRippleDeleteCommit={onRippleDeleteCommit}
       />
       <div className="timeline-body">
         <div className="timeline-label-column" aria-hidden="true">
@@ -472,6 +500,8 @@ export function VideoTimeline({
                   duration={timelineContentDuration}
                   getCurrentTime={playbackEngine.getCurrentTime}
                   computedClips={computedClips}
+                  clipMediaPresentations={clipMediaPresentations}
+                  clipThumbnailPresentations={clipThumbnailPresentations}
                   selectedItemId={selectedTimelineItemId}
                   activeMoveDragItemId={activeMoveDragItemId}
                   snapGuide={snapGuide}
@@ -479,6 +509,9 @@ export function VideoTimeline({
                   activeAISuggestionId={activeAISuggestionId}
                   onItemSelect={handleItemSelect}
                   onClipSelect={onTimelineItemSelect}
+                  onClipSeek={(timestamp) =>
+                    onSeekRequest(timestamp, 'timeline-item')
+                  }
                   onMoveDragStart={handleMoveDragStart}
                   onMoveDragEnd={handleMoveDragEnd}
                   onMovePreviewEndChange={setMoveDragPreviewEnd}
@@ -568,8 +601,10 @@ function TimelineHeader({
   zoom,
   computedClips,
   selectedTimelineItemId,
+  canRippleDelete,
   onZoomChange,
   onSplitCommit,
+  onRippleDeleteCommit,
 }: TimelineHeaderProps) {
   const { currentTime } = usePlaybackState()
   const clampedCurrentTime = clampTime(currentTime, duration)
@@ -609,6 +644,27 @@ function TimelineHeader({
             aria-label="Split at playhead"
           >
             Split
+          </button>
+        </span>
+        <span
+          className="timeline-action-tooltip"
+          data-tooltip="Remove selected clip and close the gap"
+        >
+          <button
+            type="button"
+            className="timeline-action-button"
+            disabled={!canRippleDelete || !selectedTimelineItemId}
+            onClick={() => {
+              if (canRippleDelete && selectedTimelineItemId) {
+                onRippleDeleteCommit(
+                  selectedTimelineItemId,
+                  clampedCurrentTime,
+                )
+              }
+            }}
+            aria-label="Ripple Delete selected clip"
+          >
+            Ripple Delete
           </button>
         </span>
         <span
@@ -699,6 +755,8 @@ function TimelineTrack({
   duration,
   getCurrentTime,
   computedClips,
+  clipMediaPresentations,
+  clipThumbnailPresentations,
   selectedItemId,
   activeMoveDragItemId,
   snapGuide,
@@ -706,6 +764,7 @@ function TimelineTrack({
   activeAISuggestionId,
   onItemSelect,
   onClipSelect,
+  onClipSeek,
   onMoveDragStart,
   onMoveDragEnd,
   onMovePreviewEndChange,
@@ -726,6 +785,10 @@ function TimelineTrack({
               <TimelineVideoStrip
                 key={computedClip.id}
                 computedClip={computedClip}
+                mediaPresentation={clipMediaPresentations[computedClip.timelineItemId]}
+                thumbnailPresentation={
+                  clipThumbnailPresentations[computedClip.timelineItemId]
+                }
                 duration={duration}
                 getCurrentTime={getCurrentTime}
                 geometry={geometry}
@@ -737,6 +800,7 @@ function TimelineTrack({
                   snapGuide.id.startsWith(`${computedClip.timelineItemId}-`)
                 }
                 onSelect={onClipSelect}
+                onSeek={onClipSeek}
                 onMoveDragStart={onMoveDragStart}
                 onMoveDragEnd={onMoveDragEnd}
                 onMovePreviewEndChange={onMovePreviewEndChange}
@@ -747,7 +811,7 @@ function TimelineTrack({
             ))
           ) : null
         ) : null}
-        {track.items.length ? (
+        {track.id !== 'video' && track.items.length ? (
           track.items.map((item) => (
             <button
               key={item.id}
@@ -775,9 +839,9 @@ function TimelineTrack({
               <span>{item.label}</span>
             </button>
           ))
-        ) : (
+        ) : track.id !== 'video' ? (
           <span className="timeline-empty-item">{track.emptyLabel}</span>
-        )}
+        ) : null}
       </div>
     </div>
   )
@@ -785,6 +849,8 @@ function TimelineTrack({
 
 function TimelineVideoStrip({
   computedClip,
+  mediaPresentation,
+  thumbnailPresentation,
   duration,
   getCurrentTime,
   geometry,
@@ -793,6 +859,7 @@ function TimelineVideoStrip({
   isMoveDragging,
   isSnapTarget,
   onSelect,
+  onSeek,
   onMoveDragStart,
   onMoveDragEnd,
   onMovePreviewEndChange,
@@ -801,6 +868,8 @@ function TimelineVideoStrip({
   onMoveCommit,
 }: {
   computedClip: ComputedClip
+  mediaPresentation: TimelineClipMediaPresentation | undefined
+  thumbnailPresentation: TimelineClipThumbnailPresentation | undefined
   duration: number
   getCurrentTime: () => number
   geometry: TimelineGeometry
@@ -809,6 +878,7 @@ function TimelineVideoStrip({
   isMoveDragging: boolean
   isSnapTarget: boolean
   onSelect: (timelineItemId: string) => void
+  onSeek: (timestamp: number) => void
   onMoveDragStart: (
     timelineItemId: string,
     cancelMoveDrag: () => void,
@@ -850,6 +920,38 @@ function TimelineVideoStrip({
     moved: boolean
   } | null>(null)
   const activeSnapTargetRef = useRef<ActiveSnapTarget | null>(null)
+  const suppressClickSeekRef = useRef(false)
+  const displayWidth = Math.max(
+    geometry.durationToPixels(displayEnd - displayStart),
+    TIMELINE_ITEM_MIN_WIDTH_PIXELS,
+  )
+  const labelDensity = displayWidth < TIMELINE_CLIP_LABEL_MINIMAL_WIDTH_PIXELS
+    ? 'minimal'
+    : displayWidth < TIMELINE_CLIP_LABEL_COMPACT_WIDTH_PIXELS
+      ? 'compact'
+      : 'full'
+  const clipPresentation = mediaPresentation ?? {
+    assetId: computedClip.sourceClipId,
+    mediaItemId: null,
+    filename: computedClip.sourceClipId,
+    sourceColor: '#7d8797',
+    instanceIndex: 1,
+    instanceCount: 1,
+  }
+  const clipDuration = formatDuration(computedClip.visibleDuration)
+  const thumbnailCount = Math.max(
+    1,
+    Math.floor(displayWidth / TIMELINE_CLIP_THUMBNAIL_TARGET_WIDTH_PIXELS),
+  )
+  const thumbnailFrames = thumbnailPresentation
+    ? sampleTimelineClipThumbnailFrames(
+        thumbnailPresentation.frames,
+        thumbnailCount,
+      )
+    : []
+  const instanceLabel = clipPresentation.instanceCount > 1
+    ? `Instance ${clipPresentation.instanceIndex} of ${clipPresentation.instanceCount}`
+    : 'Timeline instance'
 
   useEffect(() => {
     setPreviewTrim(null)
@@ -996,6 +1098,7 @@ function TimelineVideoStrip({
     const finalTimelineStart = previewTimelineStartRef.current ??
       moveDragState.initialTimelineStart
 
+    suppressClickSeekRef.current = shouldCommit && moveDragState.moved
     moveDragStateRef.current = null
     activeSnapTargetRef.current = null
 
@@ -1106,24 +1209,46 @@ function TimelineVideoStrip({
       data-selected={isSelected}
       data-dragging={isMoveDragging ? true : undefined}
       data-snap-target={isSnapTarget ? true : undefined}
+      data-label-density={labelDensity}
+      data-thumbnail-identity={thumbnailPresentation?.identity}
+      data-thumbnail-state={thumbnailPresentation?.state ?? 'unavailable'}
+      data-thumbnail-source-id={thumbnailPresentation?.sourceClipId}
+      data-thumbnail-source-start={thumbnailPresentation?.sourceStart}
+      data-thumbnail-source-end={thumbnailPresentation?.sourceEnd}
       role="button"
       tabIndex={0}
       style={{
         left: `${geometry.timeToTimelineX(displayStart)}px`,
-        width: `${Math.max(
-          geometry.durationToPixels(displayEnd - displayStart),
-          TIMELINE_ITEM_MIN_WIDTH_PIXELS,
-        )}px`,
-      }}
+        width: `${displayWidth}px`,
+        '--timeline-source-color': clipPresentation.sourceColor,
+      } as CSSProperties}
+      title={`${clipPresentation.filename} - ${instanceLabel} - ${clipDuration}`}
+      aria-label={`${clipPresentation.filename}, ${instanceLabel}, ${clipDuration}`}
       onPointerDown={handleMovePointerDown}
       onPointerMove={handleMovePointerMove}
       onPointerUp={(event) => finishMoveDrag(event, true)}
       onPointerCancel={(event) => finishMoveDrag(event, false)}
       onClick={(event) => {
         event.stopPropagation()
-        if (!moveDragStateRef.current) {
-          onSelect(computedClip.timelineItemId)
+        if (isTrimHandleTarget(event.target)) {
+          return
         }
+        if (suppressClickSeekRef.current) {
+          suppressClickSeekRef.current = false
+          return
+        }
+
+        const coordinateElement = getTrimCoordinateElement(event.currentTarget)
+        const rect = coordinateElement.getBoundingClientRect()
+        const timestamp = geometry.timelineXToTime(event.clientX - rect.left)
+
+        onSelect(computedClip.timelineItemId)
+        onSeek(
+          Math.min(
+            Math.max(timestamp, computedClip.visibleStart),
+            computedClip.visibleEnd,
+          ),
+        )
       }}
       onKeyDown={(event) => {
         if (event.key === 'Enter' || event.key === ' ') {
@@ -1132,6 +1257,19 @@ function TimelineVideoStrip({
         }
       }}
     >
+      <TimelineClipFilmstrip
+        presentation={thumbnailPresentation}
+        frames={thumbnailFrames}
+      />
+      <span className="timeline-source-accent" aria-hidden="true" />
+      <span className="timeline-video-strip-content">
+        <span className="timeline-video-strip-name">
+          {clipPresentation.filename}
+        </span>
+        <span className="timeline-video-strip-meta">
+          {instanceLabel} · {clipDuration}
+        </span>
+      </span>
       {isSelected ? (
         <>
           <span
@@ -1154,6 +1292,39 @@ function TimelineVideoStrip({
           />
         </>
       ) : null}
+    </span>
+  )
+}
+
+function TimelineClipFilmstrip({
+  presentation,
+  frames,
+}: {
+  presentation: TimelineClipThumbnailPresentation | undefined
+  frames: ReturnType<typeof sampleTimelineClipThumbnailFrames>
+}) {
+  if (!presentation || !frames.length) {
+    return <span className="timeline-clip-filmstrip-fallback" aria-hidden="true" />
+  }
+
+  return (
+    <span
+      className="timeline-clip-filmstrip"
+      data-thumbnail-identity={presentation.identity}
+      style={{
+        '--timeline-thumbnail-count': frames.length,
+      } as CSSProperties}
+      aria-hidden="true"
+    >
+      {frames.map((frame) => (
+        <img
+          key={`${presentation.identity}:${frame.sourceTimestamp}`}
+          className="timeline-clip-thumbnail"
+          src={frame.dataUrl}
+          data-source-timestamp={frame.sourceTimestamp}
+          alt=""
+        />
+      ))}
     </span>
   )
 }
@@ -1390,7 +1561,7 @@ function buildTimelineTracks(
     {
       id: 'video',
       label: 'Video',
-      items: getVideoItems(item.previews?.previews ?? [], duration),
+      items: [],
       emptyLabel: 'Video track',
     },
     {
@@ -1412,30 +1583,6 @@ function buildTimelineTracks(
       emptyLabel: 'No AI suggestions',
     },
   ]
-}
-
-function getVideoItems(
-  previews: VideoPreviewFrame[],
-  duration: number,
-): TimelineItemModel[] {
-  if (!previews.length) {
-    return []
-  }
-
-  return previews.map((frame, index) => {
-    const start = clampTime(frame.timestamp, duration)
-
-    return {
-      id: `preview-${index}-${Math.round(frame.timestamp * 1000)}`,
-      trackId: 'video',
-      kind: 'video-preview',
-      start,
-      end: start,
-      label: formatDuration(frame.timestamp),
-      title: `Preview frame: ${formatDuration(frame.timestamp)}`,
-      thumbnailUrl: frame.data_url,
-    }
-  })
 }
 
 function getSceneItems(scenes: VideoScene[], duration: number): TimelineItemModel[] {
