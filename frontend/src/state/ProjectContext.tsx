@@ -30,12 +30,16 @@ import {
   createOperationTimestamp,
 } from '../utils/operationIds'
 import {
+  clearPrimaryProjectMedia,
+  clearReferenceProjectMedia,
   choosePrimaryProjectMedia,
   chooseReferenceProjectMedia,
   getPrimaryProjectMediaBinding,
-  reconnectPrimaryProjectMedia,
+  reconnectProjectMediaAsset,
   registerProjectMediaAssets,
   normalizeProjectMediaRoles,
+  removeProjectMediaAsset as removeMediaAssetFromProject,
+  swapPrimaryAndReferenceProjectMedia,
   updateProjectMediaDuration,
   type ProjectMediaDescriptor,
 } from './ProjectMedia'
@@ -44,6 +48,18 @@ import {
   createIdleProjectAnalysisState,
   type ProjectAnalysis,
 } from '../analysis/models'
+import {
+  createRoughCutPlan,
+  isRoughCutPlan,
+  isRoughCutPlanForAnalysis,
+  restoreRoughCutPlanDefaults as restorePlanDefaults,
+  setAllRoughCutPlanItemsReviewStatus,
+  setRoughCutPlanItemReviewStatus,
+} from '../planner/RoughCutPlanner'
+import type {
+  RoughCutPlanItemReviewStatus,
+} from '../planner/models'
+import { createRoughCutExecution } from '../execution/RoughCutExecutor'
 
 type ProjectProviderProps = {
   children: ReactNode
@@ -78,6 +94,21 @@ function restoreProjectState(value: unknown): CentralProjectState {
       ? project.analysis as CentralProjectState['project']['analysis']
       : createIdleProjectAnalysisState(),
   })
+  const completedAnalysis = restoredProject.analysis?.status === 'completed'
+    ? restoredProject.analysis.result
+    : null
+  const storedPlan = isRoughCutPlan(project.roughCutPlan)
+    ? project.roughCutPlan
+    : null
+  const roughCutPlan = completedAnalysis
+    ? isRoughCutPlanForAnalysis(storedPlan, completedAnalysis)
+      ? storedPlan
+      : createRoughCutPlan(
+          completedAnalysis,
+          restoredProject.analysis?.completedAt ??
+            completedAnalysis.generatedAt,
+        )
+    : null
   const timelineViewport = isRecord(value.timelineViewport) &&
     isRecord(value.timelineViewport.zoom)
       ? value.timelineViewport as CentralProjectState['timelineViewport']
@@ -86,7 +117,10 @@ function restoreProjectState(value: unknown): CentralProjectState {
   return {
     ...defaultProjectState,
     ...value,
-    project: restoredProject,
+    project: {
+      ...restoredProject,
+      roughCutPlan,
+    },
     selectedSuggestionIds: Array.isArray(value.selectedSuggestionIds)
       ? value.selectedSuggestionIds.filter((id): id is string => typeof id === 'string')
       : defaultProjectState.selectedSuggestionIds,
@@ -172,6 +206,11 @@ function getUndoSelection(
   timelineItemId: string | null,
   operationGroup: EditOperationGroup,
 ) {
+  if (operationGroup.roughCutExecution) {
+    return operationGroup.roughCutExecution
+      .selectionBeforeTimelineItemId
+  }
+
   return [...operationGroup.operations]
     .reverse()
     .reduce((selectedTimelineItemId, operation) => {
@@ -197,6 +236,11 @@ function getRedoSelection(
   timelineItemId: string | null,
   operationGroup: EditOperationGroup,
 ) {
+  if (operationGroup.roughCutExecution) {
+    return operationGroup.roughCutExecution
+      .selectionAfterTimelineItemId
+  }
+
   return operationGroup.operations.reduce((selectedTimelineItemId, operation) => {
     if (operation.type === 'ripple-delete') {
       return operation.selectionAfterTimelineItemId
@@ -229,6 +273,18 @@ function getHistorySeekRequest(
   operationGroup: EditOperationGroup,
   direction: 'undo' | 'redo',
 ) {
+  if (operationGroup.roughCutExecution) {
+    return {
+      id: (state.seekRequest?.id ?? 0) + 1,
+      timelineTime: timelineTime(
+        direction === 'undo'
+          ? operationGroup.roughCutExecution.playheadBefore
+          : operationGroup.roughCutExecution.playheadAfter,
+      ),
+      reason: 'rough-cut-apply' as const,
+    }
+  }
+
   const rippleOperations = operationGroup.operations.filter(
     (operation) => operation.type === 'ripple-delete',
   )
@@ -314,6 +370,61 @@ function addInitialPrimaryTimelineItem(
       },
       updatedAt: createdAt,
     },
+  }
+}
+
+function resetSourceDependentProject(
+  project: CentralProjectState['project'],
+) {
+  const updatedAt = createOperationTimestamp()
+
+  return {
+    ...project,
+    timeline: {
+      ...project.timeline,
+      duration: 0,
+      items: [],
+      updatedAt,
+    },
+    suggestions: [],
+    operations: [],
+    history: {
+      entries: [],
+      undoStack: [],
+      redoStack: [],
+    },
+    analysis: createIdleProjectAnalysisState(),
+    roughCutPlan: null,
+    updatedAt,
+  }
+}
+
+function createFreshPrimaryTimelineState(
+  currentState: CentralProjectState,
+  project: CentralProjectState['project'],
+) {
+  const resetState: CentralProjectState = {
+    ...currentState,
+    selectedSuggestionIds: [],
+    activeSuggestionId: null,
+    selectedClipIds: [],
+    selection: getSelectionState(null),
+    seekRequest: {
+      id: (currentState.seekRequest?.id ?? 0) + 1,
+      timelineTime: timelineTime(0),
+      reason: 'media-change',
+    },
+  }
+  const stateWithInitialClip = addInitialPrimaryTimelineItem(
+    resetState,
+    project,
+    true,
+  )
+
+  return {
+    ...stateWithInitialClip,
+    selectedClipIds: [],
+    selection: getSelectionState(null),
   }
 }
 
@@ -501,57 +612,118 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
     })
   }, [setProjectState])
 
-  const choosePrimaryMedia = useCallback((mediaItemId: string) => {
+  const setPrimaryMedia = useCallback((mediaItemId: string) => {
     setProjectState((currentState) => {
       const previousPrimaryAssetId =
         getPrimaryProjectMediaBinding(currentState.project)?.asset.id ?? null
-      let project = choosePrimaryProjectMedia(
+      const projectWithRole = choosePrimaryProjectMedia(
         currentState.project,
         mediaItemId,
       )
       const nextPrimaryAssetId =
-        getPrimaryProjectMediaBinding(project)?.asset.id ?? null
+        getPrimaryProjectMediaBinding(projectWithRole)?.asset.id ?? null
 
-      if (nextPrimaryAssetId !== previousPrimaryAssetId) {
-        project = {
-          ...project,
-          analysis: createIdleProjectAnalysisState(),
-        }
+      if (!nextPrimaryAssetId || nextPrimaryAssetId === previousPrimaryAssetId) {
+        return currentState
       }
 
-      return addInitialPrimaryTimelineItem(
+      return createFreshPrimaryTimelineState(
         currentState,
-        project,
-        true,
+        resetSourceDependentProject(projectWithRole),
       )
     })
   }, [setProjectState])
 
-  const connectPrimaryMedia = useCallback((mediaItem: ProjectMediaDescriptor) => {
+  const swapPrimaryAndReference = useCallback(() => {
     setProjectState((currentState) => {
-      const currentPrimary = getPrimaryProjectMediaBinding(currentState.project)
+      const projectWithSwappedRoles = swapPrimaryAndReferenceProjectMedia(
+        currentState.project,
+      )
 
-      if (currentPrimary) {
-        const project = reconnectPrimaryProjectMedia(
-          currentState.project,
-          mediaItem,
-        )
-
-        return project === currentState.project
-          ? currentState
-          : {
-              ...currentState,
-              project,
-            }
+      if (projectWithSwappedRoles === currentState.project) {
+        return currentState
       }
 
-      let project = registerProjectMediaAssets(
-        currentState.project,
-        [mediaItem],
+      return createFreshPrimaryTimelineState(
+        currentState,
+        resetSourceDependentProject(projectWithSwappedRoles),
       )
-      project = choosePrimaryProjectMedia(project, mediaItem.id)
+    })
+  }, [setProjectState])
 
-      return addInitialPrimaryTimelineItem(currentState, project, true)
+  const clearReferenceMedia = useCallback(() => {
+    setProjectState((currentState) => {
+      const project = clearReferenceProjectMedia(currentState.project)
+
+      return project === currentState.project
+        ? currentState
+        : {
+            ...currentState,
+            project,
+          }
+    })
+  }, [setProjectState])
+
+  const removeProjectMediaAsset = useCallback((mediaItemId: string) => {
+    setProjectState((currentState) => {
+      const targetBinding = currentState.project.assets.find(
+        (asset) => asset.mediaItemId === mediaItemId,
+      )
+      const primaryBinding = getPrimaryProjectMediaBinding(
+        currentState.project,
+      )
+      const shouldResetEditor = Boolean(
+        targetBinding &&
+        primaryBinding?.asset.id === targetBinding.id,
+      )
+      const projectBeforeRemoval = shouldResetEditor
+        ? resetSourceDependentProject(
+            clearPrimaryProjectMedia(currentState.project),
+          )
+        : currentState.project
+      const project = removeMediaAssetFromProject(
+        projectBeforeRemoval,
+        mediaItemId,
+      )
+
+      if (project === currentState.project) {
+        return currentState
+      }
+
+      return shouldResetEditor
+        ? {
+            ...currentState,
+            selectedSuggestionIds: [],
+            activeSuggestionId: null,
+            selectedClipIds: [],
+            selection: getSelectionState(null),
+            seekRequest: {
+              id: (currentState.seekRequest?.id ?? 0) + 1,
+              timelineTime: timelineTime(0),
+              reason: 'media-change',
+            },
+            project,
+          }
+        : {
+            ...currentState,
+            project,
+          }
+    })
+  }, [setProjectState])
+
+  const connectProjectMedia = useCallback((mediaItem: ProjectMediaDescriptor) => {
+    setProjectState((currentState) => {
+      const project = reconnectProjectMediaAsset(
+        currentState.project,
+        mediaItem,
+      )
+
+      return project === currentState.project
+        ? currentState
+        : {
+            ...currentState,
+            project,
+          }
     })
   }, [setProjectState])
 
@@ -579,6 +751,7 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
             startedAt,
             completedAt: null,
           },
+          roughCutPlan: null,
           updatedAt: startedAt,
         },
       }
@@ -617,6 +790,7 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
             startedAt: activeAnalysis.startedAt,
             completedAt,
           },
+          roughCutPlan: createRoughCutPlan(analysis, completedAt),
           updatedAt: completedAt,
         },
       }
@@ -660,7 +834,203 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
     })
   }, [setProjectState])
 
-  const chooseReferenceMedia = useCallback((mediaItemId: string) => {
+  const retryProjectAnalysis = useCallback(() => {
+    setProjectState((currentState) => {
+      const primaryAssetId =
+        getPrimaryProjectMediaBinding(currentState.project)?.asset.id ?? null
+      const analysis = currentState.project.analysis
+
+      if (
+        !primaryAssetId ||
+        analysis?.status !== 'failed' ||
+        analysis.sourceAssetId !== primaryAssetId
+      ) {
+        return currentState
+      }
+
+      return {
+        ...currentState,
+        project: {
+          ...currentState.project,
+          analysis: createIdleProjectAnalysisState(),
+          roughCutPlan: null,
+          updatedAt: createOperationTimestamp(),
+        },
+      }
+    })
+  }, [setProjectState])
+
+  const rebuildRoughCutPlan = useCallback(() => {
+    setProjectState((currentState) => {
+      const analysis = currentState.project.analysis
+      const result = analysis?.status === 'completed'
+        ? analysis.result
+        : null
+
+      if (!result) {
+        return currentState
+      }
+
+      const createdAt = createOperationTimestamp()
+
+      return {
+        ...currentState,
+        project: {
+          ...currentState.project,
+          roughCutPlan: createRoughCutPlan(result, createdAt),
+          updatedAt: createdAt,
+        },
+      }
+    })
+  }, [setProjectState])
+
+  const setRoughCutPlanItemStatus = useCallback((
+    itemId: string,
+    status: RoughCutPlanItemReviewStatus,
+  ) => {
+    setProjectState((currentState) => {
+      const plan = currentState.project.roughCutPlan
+      const item = plan?.items.find((candidate) => candidate.id === itemId)
+
+      if (
+        !plan ||
+        plan.execution ||
+        !item ||
+        item.executionStatus !== 'not-applied' ||
+        item.reviewStatus === status
+      ) {
+        return currentState
+      }
+
+      return {
+        ...currentState,
+        project: {
+          ...currentState.project,
+          roughCutPlan: setRoughCutPlanItemReviewStatus(
+            plan,
+            itemId,
+            status,
+          ),
+          updatedAt: createOperationTimestamp(),
+        },
+      }
+    })
+  }, [setProjectState])
+
+  const setAllRoughCutPlanItemsStatus = useCallback((
+    status: RoughCutPlanItemReviewStatus,
+  ) => {
+    setProjectState((currentState) => {
+      const plan = currentState.project.roughCutPlan
+
+      if (
+        !plan ||
+        plan.execution ||
+        plan.items.every((item) => item.reviewStatus === status)
+      ) {
+        return currentState
+      }
+
+      return {
+        ...currentState,
+        project: {
+          ...currentState.project,
+          roughCutPlan: setAllRoughCutPlanItemsReviewStatus(plan, status),
+          updatedAt: createOperationTimestamp(),
+        },
+      }
+    })
+  }, [setProjectState])
+
+  const restoreRoughCutPlanDefaults = useCallback(() => {
+    setProjectState((currentState) => {
+      const plan = currentState.project.roughCutPlan
+
+      if (
+        !plan ||
+        plan.execution ||
+        plan.items.every(
+          (item) => item.reviewStatus === item.defaultReviewStatus,
+        )
+      ) {
+        return currentState
+      }
+
+      return {
+        ...currentState,
+        project: {
+          ...currentState.project,
+          roughCutPlan: restorePlanDefaults(plan),
+          updatedAt: createOperationTimestamp(),
+        },
+      }
+    })
+  }, [setProjectState])
+
+  const applyRoughCut = useCallback((
+    playheadTime: number,
+    sourceAvailable: boolean,
+  ) => {
+    const createdAt = createOperationTimestamp()
+    const result = createRoughCutExecution(
+      projectState.project,
+      projectState.project.analysis ?? createIdleProjectAnalysisState(),
+      {
+        sourceAvailable,
+        selectionBeforeTimelineItemId:
+          projectState.selection.primaryItemId,
+        playheadBefore: playheadTime,
+        createdAt,
+        actionId: createOperationId('rough-cut-action'),
+        createId: createOperationId,
+      },
+    )
+
+    if (!result.valid) {
+      return result.reason
+    }
+
+    setProjectState((currentState) => {
+      if (currentState.project !== projectState.project) {
+        return currentState
+      }
+
+      const operationState = applyOperationGroup(
+        currentState.project.operations,
+        result.operationGroup,
+      )
+
+      return {
+        ...currentState,
+        selection: getSelectionState(
+          result.selectionAfterTimelineItemId,
+        ),
+        seekRequest: {
+          id: (currentState.seekRequest?.id ?? 0) + 1,
+          timelineTime: timelineTime(result.playheadAfter),
+          reason: 'rough-cut-apply',
+        },
+        project: {
+          ...currentState.project,
+          operations: operationState.operations,
+          roughCutPlan: result.planAfter,
+          history: {
+            ...currentState.project.history,
+            undoStack: [
+              ...currentState.project.history.undoStack,
+              ...operationState.undoStack,
+            ],
+            redoStack: operationState.redoStack,
+          },
+          updatedAt: createdAt,
+        },
+      }
+    })
+
+    return null
+  }, [projectState, setProjectState])
+
+  const setReferenceMedia = useCallback((mediaItemId: string) => {
     setProjectState((currentState) => {
       const project = chooseReferenceProjectMedia(
         currentState.project,
@@ -998,6 +1368,9 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
           operations: currentState.project.operations.filter(
             (item) => !operationIds.has(item.id),
           ),
+          roughCutPlan:
+            operation.roughCutExecution?.planBefore ??
+            currentState.project.roughCutPlan,
           history: {
             ...currentState.project.history,
             undoStack: currentState.project.history.undoStack.slice(0, -1),
@@ -1040,6 +1413,9 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
                 ),
             ),
           ],
+          roughCutPlan:
+            operation.roughCutExecution?.planAfter ??
+            currentState.project.roughCutPlan,
           history: {
             ...currentState.project.history,
             undoStack: [...currentState.project.history.undoStack, operation],
@@ -1070,12 +1446,21 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
       setOutputSettings,
       registerMediaAssets,
       updateMediaDuration,
-      choosePrimaryMedia,
-      connectPrimaryMedia,
-      chooseReferenceMedia,
+      setPrimaryMedia,
+      setReferenceMedia,
+      swapPrimaryAndReference,
+      clearReferenceMedia,
+      removeProjectMediaAsset,
+      connectProjectMedia,
       startProjectAnalysis,
       completeProjectAnalysis,
       failProjectAnalysis,
+      retryProjectAnalysis,
+      rebuildRoughCutPlan,
+      setRoughCutPlanItemStatus,
+      setAllRoughCutPlanItemsStatus,
+      restoreRoughCutPlanDefaults,
+      applyRoughCut,
       applyTrimOperation,
       applySplitOperation,
       applyRippleDeleteOperation,
@@ -1097,12 +1482,21 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
       setOutputSettings,
       registerMediaAssets,
       updateMediaDuration,
-      choosePrimaryMedia,
-      connectPrimaryMedia,
-      chooseReferenceMedia,
+      setPrimaryMedia,
+      setReferenceMedia,
+      swapPrimaryAndReference,
+      clearReferenceMedia,
+      removeProjectMediaAsset,
+      connectProjectMedia,
       startProjectAnalysis,
       completeProjectAnalysis,
       failProjectAnalysis,
+      retryProjectAnalysis,
+      rebuildRoughCutPlan,
+      setRoughCutPlanItemStatus,
+      setAllRoughCutPlanItemsStatus,
+      restoreRoughCutPlanDefaults,
+      applyRoughCut,
       applyTrimOperation,
       applySplitOperation,
       applyRippleDeleteOperation,

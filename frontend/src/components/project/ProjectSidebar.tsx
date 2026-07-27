@@ -31,9 +31,9 @@ type ProjectSidebarProps = {
   referenceAsset: ProjectAsset | null
   primaryMediaItemId: string | null
   referenceMediaItemId: string | null
-  primaryCandidateItemIds: string[]
-  referenceCandidateItemIds: string[]
   analysis: ProjectAnalysisState
+  isPrimarySourceAvailable: boolean
+  onAnalysisRetry: () => void
   isPrimarySourceConnecting: boolean
   primarySourceError: string | null
   assetPresentations: Record<string, MediaLibraryAssetPresentation>
@@ -45,8 +45,10 @@ type ProjectSidebarProps = {
   onMediaSelect: (itemId: string) => void
   onPrimaryMediaChoose: (itemId: string) => void
   onReferenceMediaChoose: (itemId: string) => void
+  onSwapPrimaryAndReference: () => void
+  onClearReference: () => void
+  onReconnectMedia: () => void
   onMediaRemove: (itemId: string) => void
-  onMediaClear: () => void
   onOutputSettingsChange: (settings: ProjectOutputSettings) => void
   onStageSelect: (stageId: string, substageId?: string) => void
   onStageToggle: (stageId: string) => void
@@ -64,9 +66,9 @@ export function ProjectSidebar({
   referenceAsset,
   primaryMediaItemId,
   referenceMediaItemId,
-  primaryCandidateItemIds,
-  referenceCandidateItemIds,
   analysis,
+  isPrimarySourceAvailable,
+  onAnalysisRetry,
   isPrimarySourceConnecting,
   primarySourceError,
   assetPresentations,
@@ -78,8 +80,10 @@ export function ProjectSidebar({
   onMediaSelect,
   onPrimaryMediaChoose,
   onReferenceMediaChoose,
+  onSwapPrimaryAndReference,
+  onClearReference,
+  onReconnectMedia,
   onMediaRemove,
-  onMediaClear,
   onOutputSettingsChange,
   onStageSelect,
   onStageToggle,
@@ -93,15 +97,6 @@ export function ProjectSidebar({
     }
 
     event.target.value = ''
-  }
-
-  const handleClearLibrary = () => {
-    if (
-      mediaItems.length > 0 &&
-      window.confirm('Очистить всю медиатеку проекта?')
-    ) {
-      onMediaClear()
-    }
   }
 
   const handleTargetDurationChange = (event: ChangeEvent<HTMLSelectElement>) => {
@@ -198,30 +193,43 @@ export function ProjectSidebar({
             Подэтапов: {stats.approvedSubstages} из {stats.totalSubstages}
           </p>
         </div>
-        <div className="project-media-roles" aria-label="Project video roles">
+        <div className="project-media-roles" aria-label="Роли видео проекта">
           <div className="project-media-role">
-            <span>Main video</span>
-            <strong>{primaryAsset?.filename ?? 'Not selected'}</strong>
+            <span>Главное видео</span>
+            <strong>{primaryAsset?.filename ?? 'Не выбрано'}</strong>
             <small>
               {primaryMediaItemId
-                ? 'The only source used by the edit timeline.'
-                : 'Choose the video you want to edit.'}
+                ? 'Единственный источник для таймлайна.'
+                : 'Выберите видео, которое хотите смонтировать.'}
             </small>
           </div>
           <div className="project-media-role">
-            <span>Editing reference</span>
-            <strong>{referenceAsset?.filename ?? 'Optional'}</strong>
+            <span>Пример монтажа</span>
+            <strong>{referenceAsset?.filename ?? 'Не выбран'}</strong>
             <small>
-              Used to learn the editing style. It will not be added to the timeline.
+              Помогает изучить стиль монтажа. Не добавляется на таймлайн.
             </small>
           </div>
         </div>
+        {primaryMediaItemId && referenceMediaItemId ? (
+          <button
+            type="button"
+            className="ghost-button compact-button"
+            onClick={onSwapPrimaryAndReference}
+          >
+            Поменять местами
+          </button>
+        ) : null}
         {primarySourceError ? (
           <p className="project-media-role-error" role="alert">
             {primarySourceError}
           </p>
         ) : null}
-        <ProjectAnalysisStatus analysis={analysis} />
+        <ProjectAnalysisStatus
+          analysis={analysis}
+          isSourceAvailable={isPrimarySourceAvailable}
+          onRetry={onAnalysisRetry}
+        />
         <button
           type="button"
           className="upload-button"
@@ -229,12 +237,10 @@ export function ProjectSidebar({
           onClick={() => document.getElementById('media-upload')?.click()}
         >
           {isPrimarySourceConnecting
-            ? 'Connecting main video...'
+            ? 'Подключаем видео...'
             : primaryMediaItemId
-            ? referenceMediaItemId
-              ? 'Import another video'
-              : 'Add reference'
-            : 'Choose main video'}
+              ? 'Добавить видео'
+              : 'Выбрать главное видео'}
         </button>
         <input
           className="visually-hidden"
@@ -257,34 +263,19 @@ export function ProjectSidebar({
         ) : null}
         <div className="media-library-head">
           <p className="section-label">Медиатека</p>
-          <button
-            type="button"
-            className="ghost-button compact-button"
-            onClick={handleClearLibrary}
-            disabled={
-              mediaItems.length === 0 ||
-              Boolean(primaryMediaItemId || referenceMediaItemId)
-            }
-            title={
-              primaryMediaItemId || referenceMediaItemId
-                ? 'Assigned project videos cannot be cleared'
-                : undefined
-            }
-          >
-            Очистить
-          </button>
         </div>
         <MediaLibraryList
           items={mediaItems}
           activeItemId={activeMediaItemId}
           primaryMediaItemId={primaryMediaItemId}
           referenceMediaItemId={referenceMediaItemId}
-          primaryCandidateItemIds={primaryCandidateItemIds}
-          referenceCandidateItemIds={referenceCandidateItemIds}
           assetPresentations={assetPresentations}
           onSelect={onMediaSelect}
           onPrimaryChoose={onPrimaryMediaChoose}
           onReferenceChoose={onReferenceMediaChoose}
+          onSwapPrimaryAndReference={onSwapPrimaryAndReference}
+          onClearReference={onClearReference}
+          onReconnect={onReconnectMedia}
           onRemove={onMediaRemove}
         />
       </section>

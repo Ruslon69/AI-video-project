@@ -7,6 +7,7 @@ export const mediaStatusProgress: Record<MediaStatus, number> = {
   'scene-detection': 85,
   transcribing: 95,
   ready: 100,
+  unavailable: 0,
   error: 100,
 }
 
@@ -17,6 +18,7 @@ const mediaStatusLabels: Record<MediaStatus, string> = {
   'scene-detection': 'Поиск сцен',
   transcribing: 'Транскрипция',
   ready: 'Готово',
+  unavailable: 'Нужно подключить файл',
   error: 'Ошибка',
 }
 

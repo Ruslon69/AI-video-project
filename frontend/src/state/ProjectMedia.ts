@@ -310,10 +310,11 @@ export function getMediaAssetId(mediaItemId: string) {
 }
 
 export function getProjectMediaRoles(project: Project): ProjectMediaRoles {
+  const hasExplicitRoles = Boolean(project.mediaRoles)
   const primaryAsset = getValidRoleAsset(
     project,
     project.mediaRoles?.primaryAssetId,
-  ) ?? inferPrimaryAsset(project)
+  ) ?? (hasExplicitRoles ? null : inferPrimaryAsset(project))
   const referenceAsset = getValidRoleAsset(
     project,
     project.mediaRoles?.referenceAssetId,
@@ -367,16 +368,10 @@ export function canChoosePrimaryMedia(
   mediaItemId: string,
 ) {
   const candidate = getProjectMediaBinding(project, mediaItemId)
-  const currentPrimary = getPrimaryProjectMediaBinding(project)
 
   return Boolean(
     candidate &&
-    candidate.asset.type === 'video' &&
-    (
-      !currentPrimary ||
-      currentPrimary.asset.id === candidate.asset.id ||
-      !currentPrimary.asset.mediaItemId
-    ),
+    candidate.asset.type === 'video',
   )
 }
 
@@ -391,12 +386,30 @@ export function choosePrimaryProjectMedia(
   }
 
   const currentRoles = getProjectMediaRoles(project)
+
+  if (currentRoles.primaryAssetId === binding.asset.id) {
+    return project
+  }
+
+  const currentPrimaryBinding = getProjectMediaBindingForAssetId(
+    project,
+    currentRoles.primaryAssetId,
+  )
+  // The legacy seed asset is not user media and must never become a reference
+  // when the first real library asset is assigned as the main video.
+  const previousPrimaryAssetId = currentPrimaryBinding &&
+    !isInitialPrimaryPlaceholder(currentPrimaryBinding)
+      ? currentRoles.primaryAssetId
+      : null
+  const nextReferenceAssetId = currentRoles.referenceAssetId === binding.asset.id
+    ? previousPrimaryAssetId
+    : currentRoles.referenceAssetId ?? previousPrimaryAssetId
   const mediaRoles: ProjectMediaRoles = {
     primaryAssetId: binding.asset.id,
     referenceAssetId:
-      currentRoles.referenceAssetId === binding.asset.id
+      nextReferenceAssetId === binding.asset.id
         ? null
-        : currentRoles.referenceAssetId,
+        : nextReferenceAssetId,
   }
 
   if (
@@ -409,6 +422,67 @@ export function choosePrimaryProjectMedia(
   return {
     ...project,
     mediaRoles,
+    updatedAt: new Date().toISOString(),
+  }
+}
+
+export function swapPrimaryAndReferenceProjectMedia(
+  project: Project,
+): Project {
+  const currentRoles = getProjectMediaRoles(project)
+  const primaryBinding = getProjectMediaBindingForAssetId(
+    project,
+    currentRoles.primaryAssetId,
+  )
+  const referenceBinding = getProjectMediaBindingForAssetId(
+    project,
+    currentRoles.referenceAssetId,
+  )
+
+  if (!primaryBinding || !referenceBinding) {
+    return project
+  }
+
+  return {
+    ...project,
+    mediaRoles: {
+      primaryAssetId: referenceBinding.asset.id,
+      referenceAssetId: primaryBinding.asset.id,
+    },
+    updatedAt: new Date().toISOString(),
+  }
+}
+
+export function clearPrimaryProjectMedia(project: Project): Project {
+  const currentRoles = getProjectMediaRoles(project)
+
+  if (!currentRoles.primaryAssetId) {
+    return project
+  }
+
+  return {
+    ...project,
+    mediaRoles: {
+      primaryAssetId: null,
+      referenceAssetId: currentRoles.referenceAssetId,
+    },
+    updatedAt: new Date().toISOString(),
+  }
+}
+
+export function clearReferenceProjectMedia(project: Project): Project {
+  const currentRoles = getProjectMediaRoles(project)
+
+  if (!currentRoles.referenceAssetId) {
+    return project
+  }
+
+  return {
+    ...project,
+    mediaRoles: {
+      primaryAssetId: currentRoles.primaryAssetId,
+      referenceAssetId: null,
+    },
     updatedAt: new Date().toISOString(),
   }
 }
@@ -505,6 +579,52 @@ export function reconnectPrimaryProjectMedia(
   }
 }
 
+export function reconnectProjectMediaAsset(
+  project: Project,
+  mediaItem: ProjectMediaDescriptor,
+): Project {
+  const binding = getProjectMediaBinding(project, mediaItem.id)
+
+  if (!binding) {
+    return project
+  }
+
+  const updatedAt = new Date().toISOString()
+
+  return {
+    ...project,
+    assets: project.assets.map((asset) =>
+      asset.id === binding.asset.id
+        ? {
+            ...asset,
+            filename: mediaItem.filename,
+            duration: mediaItem.duration ?? asset.duration,
+            fileSize: mediaItem.fileSize,
+            mimeType: mediaItem.mimeType,
+            lastModified: mediaItem.lastModified,
+          }
+        : asset,
+    ),
+    timeline: {
+      ...project.timeline,
+      tracks: project.timeline.tracks.map((track) => ({
+        ...track,
+        clips: track.clips.map((clip) =>
+          clip.id === binding.sourceClip.id
+            ? updateSourceClip(
+                clip,
+                mediaItem.filename,
+                mediaItem.duration ?? clip.source.end,
+              )
+            : clip,
+        ),
+      })),
+      updatedAt,
+    },
+    updatedAt,
+  }
+}
+
 export function canChooseReferenceMedia(
   project: Project,
   mediaItemId: string,
@@ -542,6 +662,45 @@ export function chooseReferenceProjectMedia(
       referenceAssetId: binding.asset.id,
     },
     updatedAt: new Date().toISOString(),
+  }
+}
+
+export function removeProjectMediaAsset(
+  project: Project,
+  mediaItemId: string,
+): Project {
+  const binding = getProjectMediaBinding(project, mediaItemId)
+
+  if (!binding) {
+    return project
+  }
+
+  const currentRoles = getProjectMediaRoles(project)
+  const updatedAt = new Date().toISOString()
+
+  return {
+    ...project,
+    assets: project.assets.filter((asset) => asset.id !== binding.asset.id),
+    mediaRoles: {
+      primaryAssetId: currentRoles.primaryAssetId === binding.asset.id
+        ? null
+        : currentRoles.primaryAssetId,
+      referenceAssetId: currentRoles.referenceAssetId === binding.asset.id
+        ? null
+        : currentRoles.referenceAssetId,
+    },
+    timeline: {
+      ...project.timeline,
+      items: project.timeline.items.filter(
+        (item) => item.sourceId !== binding.sourceClip.id,
+      ),
+      tracks: project.timeline.tracks.map((track) => ({
+        ...track,
+        clips: track.clips.filter((clip) => clip.id !== binding.sourceClip.id),
+      })),
+      updatedAt,
+    },
+    updatedAt,
   }
 }
 

@@ -27,12 +27,13 @@ type MediaLibraryListProps = {
   activeItemId: string | null
   primaryMediaItemId: string | null
   referenceMediaItemId: string | null
-  primaryCandidateItemIds: string[]
-  referenceCandidateItemIds: string[]
   assetPresentations: Record<string, MediaLibraryAssetPresentation>
   onSelect: (itemId: string) => void
   onPrimaryChoose: (itemId: string) => void
   onReferenceChoose: (itemId: string) => void
+  onSwapPrimaryAndReference: () => void
+  onClearReference: () => void
+  onReconnect: () => void
   onRemove: (itemId: string) => void
 }
 
@@ -41,12 +42,13 @@ export function MediaLibraryList({
   activeItemId,
   primaryMediaItemId,
   referenceMediaItemId,
-  primaryCandidateItemIds,
-  referenceCandidateItemIds,
   assetPresentations,
   onSelect,
   onPrimaryChoose,
   onReferenceChoose,
+  onSwapPrimaryAndReference,
+  onClearReference,
+  onReconnect,
   onRemove,
 }: MediaLibraryListProps) {
   if (items.length === 0) {
@@ -64,8 +66,12 @@ export function MediaLibraryList({
         const instanceCount = assetPresentation?.timelineInstanceCount ?? 0
         const isPrimary = primaryMediaItemId === item.id
         const isReference = referenceMediaItemId === item.id
-        const canChoosePrimary = primaryCandidateItemIds.includes(item.id)
-        const canChooseReference = referenceCandidateItemIds.includes(item.id)
+        const isVideo = item.type === 'video'
+        const roleLabel = isPrimary
+          ? 'Главное видео'
+          : isReference
+            ? 'Пример монтажа'
+            : 'Без роли'
 
         return (
           <li
@@ -97,12 +103,12 @@ export function MediaLibraryList({
               </span>
               <span className="media-library-usage">
                 {isPrimary
-                  ? `Main video · Timeline segments: ${instanceCount}`
+                  ? `На таймлайне: ${instanceCount}`
                   : isReference
-                    ? 'Editing reference · Never added to timeline'
+                    ? 'Не добавляется на таймлайн'
                     : instanceCount > 0
-                  ? `On timeline: ${instanceCount}`
-                  : 'Not on timeline'}
+                  ? `На таймлайне: ${instanceCount}`
+                  : 'Не на таймлайне'}
               </span>
             </span>
             <span className="media-library-state">
@@ -133,54 +139,55 @@ export function MediaLibraryList({
             ) : null}
             <MediaItemMetadata item={item} />
           </button>
-          <span className="media-library-actions">
-            {isPrimary || isReference ? (
-              <span className="media-role-badge">
-                {isPrimary ? 'Main video' : 'Reference'}
-              </span>
-            ) : canChoosePrimary ? (
-              <button
-                type="button"
-                className="ghost-button compact-button"
-                onClick={() => onPrimaryChoose(item.id)}
-                aria-label={`Choose ${item.filename} as the main video`}
-              >
-                Choose main video
-              </button>
-            ) : canChooseReference ? (
-              <button
-                type="button"
-                className="ghost-button compact-button"
-                onClick={() => onReferenceChoose(item.id)}
-                aria-label={`Use ${item.filename} as the editing reference`}
-              >
-                Use as reference
-              </button>
-            ) : null}
-            {isReference ? (
-              <button
-                type="button"
-                className="ghost-button compact-button"
-                onClick={() => onSelect(item.id)}
-              >
-                Preview reference
-              </button>
-            ) : null}
-            <button
-              type="button"
-              className="ghost-button compact-button media-remove-button"
-              disabled={isPrimary || isReference}
-              onClick={() => onRemove(item.id)}
-              aria-label={`Удалить файл ${item.filename}`}
-              title={
-                isPrimary || isReference
-                  ? 'Assigned project videos cannot be removed'
-                  : undefined
-              }
+          <div className="media-library-actions">
+            <span
+              className="media-role-badge"
+              data-role={isPrimary ? 'primary' : isReference ? 'reference' : 'none'}
             >
-              Удалить
-            </button>
-          </span>
+              {roleLabel}
+            </span>
+            <details className="media-library-menu">
+              <summary aria-label={`Действия для ${item.filename}`}>...</summary>
+              <span className="media-library-menu-items">
+                {item.status === 'unavailable' ? (
+                  <button type="button" onClick={onReconnect}>
+                    Подключить файл
+                  </button>
+                ) : null}
+                {isVideo && isPrimary && referenceMediaItemId ? (
+                  <button type="button" onClick={onSwapPrimaryAndReference}>
+                    Поменять с примером
+                  </button>
+                ) : null}
+                {isVideo && isReference ? (
+                  <>
+                    <button type="button" onClick={() => onPrimaryChoose(item.id)}>
+                      Сделать главным
+                    </button>
+                    <button type="button" onClick={onClearReference}>
+                      Снять роль примера
+                    </button>
+                  </>
+                ) : isVideo && isPrimary ? null : isVideo ? (
+                  <>
+                    <button type="button" onClick={() => onPrimaryChoose(item.id)}>
+                      Сделать главным
+                    </button>
+                    <button type="button" onClick={() => onReferenceChoose(item.id)}>
+                      Сделать примером
+                    </button>
+                  </>
+                ) : null}
+                <button
+                  type="button"
+                  className="media-remove-button"
+                  onClick={() => onRemove(item.id)}
+                >
+                  {isReference ? 'Удалить из медиатеки' : 'Удалить'}
+                </button>
+              </span>
+            </details>
+          </div>
           </li>
         )
       })}

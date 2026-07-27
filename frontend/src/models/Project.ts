@@ -2,6 +2,7 @@ import type { AISuggestion, MediaType } from '../types'
 import type { EditOperation, EditOperationGroup } from './EditOperation'
 import type { Timeline } from './Track'
 import type { ProjectAnalysisState } from '../analysis/models'
+import type { RoughCutPlan } from '../planner/models'
 
 export interface ProjectAsset {
   id: string
@@ -47,6 +48,7 @@ export interface Project {
   assets: ProjectAsset[]
   mediaRoles?: ProjectMediaRoles
   analysis?: ProjectAnalysisState
+  roughCutPlan?: RoughCutPlan | null
   timeline: Timeline
   suggestions: ProjectSuggestion[]
   operations: EditOperation[]

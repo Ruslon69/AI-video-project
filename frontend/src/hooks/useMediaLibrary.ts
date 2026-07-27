@@ -10,6 +10,14 @@ import { getMediaStatusProgress } from '../utils/mediaStatus'
 const MAX_ACTIVE_PREVIEW_REQUESTS = 2
 const FALLBACK_VIDEO_EXTENSIONS = new Set(['mp4', 'mov', 'm4v', 'webm', 'mkv'])
 
+export type PersistedMediaLibraryItem = Readonly<{
+  id: string
+  filename: string
+  type: MediaType
+  size?: number
+  lastModified?: number
+}>
+
 function getMediaType(file: File): MediaType | null {
   if (file.type.startsWith('video/')) {
     return 'video'
@@ -61,6 +69,33 @@ function createMediaItem(file: File, type: MediaType): MediaItem {
     scenes: null,
     sceneError: null,
     transcriptionState: type === 'video' ? 'idle' : 'ready',
+    transcription: null,
+    transcriptionError: null,
+  }
+}
+
+function createUnavailableMediaItem(
+  item: PersistedMediaLibraryItem,
+): MediaItem {
+  return {
+    id: item.id,
+    file: null,
+    filename: item.filename,
+    type: item.type,
+    size: item.size ?? 0,
+    lastModified: item.lastModified ?? 0,
+    objectUrl: '',
+    status: 'unavailable',
+    progress: getMediaStatusProgress('unavailable'),
+    metadata: null,
+    errorMessage: undefined,
+    previewState: 'idle',
+    previews: null,
+    previewError: null,
+    sceneState: 'idle',
+    scenes: null,
+    sceneError: null,
+    transcriptionState: 'idle',
     transcription: null,
     transcriptionError: null,
   }
@@ -283,14 +318,14 @@ export function useMediaLibrary(
           URL.revokeObjectURL(reconnectableItem.objectUrl)
         }
 
-        reconnectedItems.push({
+	      reconnectedItems.push({
 	          ...reconnectableItem,
 	          file,
 	          objectUrl,
-	          status: reconnectableItem.metadata ? 'ready' : reconnectableItem.status,
+	          status: reconnectableItem.metadata ? 'ready' : 'uploading',
 	          progress: reconnectableItem.metadata
 	            ? getMediaStatusProgress('ready')
-	            : reconnectableItem.progress,
+	            : getMediaStatusProgress('uploading'),
 	          errorMessage: undefined,
         })
         existingKeys.add(duplicateKey)
@@ -339,7 +374,12 @@ export function useMediaLibrary(
 	      setActiveItemId(addedItems[0].id)
 	    }
 
-	    for (const item of addedVideoItems) {
+    for (const item of [
+      ...addedVideoItems,
+      ...reconnectedItems.filter((item) => (
+        item.type === 'video' && item.metadata === null
+      )),
+    ]) {
 	      const file = item.file
 
 	      if (!file) {
@@ -415,6 +455,23 @@ export function useMediaLibrary(
     setActiveItemId(itemId)
   }, [])
 
+  const restorePersistedItems = useCallback((persistedItems: PersistedMediaLibraryItem[]) => {
+    if (!persistedItems.length) {
+      return
+    }
+
+    updateItems((currentItems) => {
+      const knownIds = new Set(currentItems.map((item) => item.id))
+      const missingItems = persistedItems
+        .filter((item) => !knownIds.has(item.id))
+        .map(createUnavailableMediaItem)
+
+      return missingItems.length
+        ? [...currentItems, ...missingItems]
+        : currentItems
+    })
+  }, [updateItems])
+
   const removeItem = useCallback((itemId: string) => {
     abortMediaWork(itemId)
     updateItems((currentItems) => {
@@ -457,6 +514,7 @@ export function useMediaLibrary(
     activeItemId,
     fileRejections,
     addFiles,
+    restorePersistedItems,
     selectItem,
     removeItem,
     clearLibrary,

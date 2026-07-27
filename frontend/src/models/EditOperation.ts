@@ -1,4 +1,5 @@
 import type { TimelineItem } from './Track'
+import type { RoughCutPlan } from '../planner/models'
 
 export type EditOperationType =
   | 'add-timeline-item'
@@ -155,4 +156,13 @@ export interface EditPlan {
 export interface EditOperationGroup {
   actionId: string
   operations: EditOperation[]
+  roughCutExecution?: {
+    executionVersion: 'rough-cut-executor-v1'
+    planBefore: RoughCutPlan
+    planAfter: RoughCutPlan
+    selectionBeforeTimelineItemId: string | null
+    selectionAfterTimelineItemId: string | null
+    playheadBefore: number
+    playheadAfter: number
+  }
 }

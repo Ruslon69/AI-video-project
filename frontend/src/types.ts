@@ -78,6 +78,7 @@ export type MediaStatus =
   | 'scene-detection'
   | 'transcribing'
   | 'ready'
+  | 'unavailable'
   | 'error'
 
 export type MediaFileRejection = {

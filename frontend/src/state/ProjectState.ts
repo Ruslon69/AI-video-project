@@ -15,6 +15,12 @@ import {
   createIdleProjectAnalysisState,
   type ProjectAnalysis,
 } from '../analysis/models'
+import type {
+  RoughCutPlanItemReviewStatus,
+} from '../planner/models'
+import type {
+  RoughCutExecutionRejectionReason,
+} from '../execution/RoughCutExecutor'
 
 const createdAt = '2026-07-21T00:00:00.000Z'
 
@@ -147,6 +153,7 @@ export const defaultProject: Project = {
     referenceAssetId: null,
   },
   analysis: createIdleProjectAnalysisState(),
+  roughCutPlan: null,
   timeline: defaultProjectTimeline,
   suggestions: defaultProjectSuggestions,
   operations: [],
@@ -184,6 +191,7 @@ export type SeekRequestReason =
   | 'projection-normalization'
   | 'media-change'
   | 'ripple-delete'
+  | 'rough-cut-apply'
 
 export type SeekRequest = {
   id: number
@@ -211,15 +219,32 @@ export interface ProjectContextValue extends CentralProjectState {
   setOutputSettings: (settings: ProjectOutputSettings) => void
   registerMediaAssets: (mediaItems: ProjectMediaDescriptor[]) => void
   updateMediaDuration: (mediaItemId: string, duration: number) => void
-  choosePrimaryMedia: (mediaItemId: string) => void
-  connectPrimaryMedia: (mediaItem: ProjectMediaDescriptor) => void
-  chooseReferenceMedia: (mediaItemId: string) => void
+  setPrimaryMedia: (mediaItemId: string) => void
+  setReferenceMedia: (mediaItemId: string) => void
+  swapPrimaryAndReference: () => void
+  clearReferenceMedia: () => void
+  removeProjectMediaAsset: (mediaItemId: string) => void
+  connectProjectMedia: (mediaItem: ProjectMediaDescriptor) => void
   startProjectAnalysis: (sourceAssetId: string) => void
   completeProjectAnalysis: (
     sourceAssetId: string,
     analysis: ProjectAnalysis,
   ) => void
   failProjectAnalysis: (sourceAssetId: string, message: string) => void
+  retryProjectAnalysis: () => void
+  rebuildRoughCutPlan: () => void
+  setRoughCutPlanItemStatus: (
+    itemId: string,
+    status: RoughCutPlanItemReviewStatus,
+  ) => void
+  setAllRoughCutPlanItemsStatus: (
+    status: RoughCutPlanItemReviewStatus,
+  ) => void
+  restoreRoughCutPlanDefaults: () => void
+  applyRoughCut: (
+    playheadTime: number,
+    sourceAvailable: boolean,
+  ) => RoughCutExecutionRejectionReason | null
   applyTrimOperation: (
     timelineItemId: string,
     relativeStart: number,

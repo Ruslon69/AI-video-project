@@ -20,18 +20,24 @@ import {
 } from './selectors/editSelectors'
 import { getInspectorSelection } from './selectors/inspectorSelectors'
 import {
+  getAnalysisReviewPresentation,
+  getAnalysisTimelineOverlays,
+  getRoughCutCandidates,
+  type AnalysisSeekTarget,
+} from './selectors/analysisReviewSelectors'
+import {
   getMediaLibraryAssetPresentations,
   getTimelineClipThumbnailPresentations,
   getTimelineClipMediaPresentations,
 } from './selectors/mediaAssetSelectors'
 import { canRippleDeleteTimelineItem } from './selectors/rippleDeleteSelectors'
-import { usePlaybackControls } from './playback/PlaybackStore'
+import {
+  usePlaybackControls,
+  usePlaybackEngine,
+} from './playback/PlaybackStore'
 import { checkBackendHealth } from './services/api'
 import { useProject } from './state/useProject'
 import {
-  canChoosePrimaryMedia,
-  canChooseReferenceMedia,
-  getPrimaryMediaReconnectError,
   getPrimaryProjectMediaBinding,
   getReferenceProjectMediaBinding,
   type ProjectMediaDescriptor,
@@ -39,6 +45,12 @@ import {
 import { createIdleProjectAnalysisState } from './analysis/models'
 import { useProjectAnalysisPipeline } from './analysis/useProjectAnalysisPipeline'
 import { applyProjectAnalysisToPrimaryMedia } from './selectors/projectAnalysisSelectors'
+import {
+  getRoughCutExecutionPresentation,
+  getRoughCutPlanPresentation,
+  type RoughCutPlanItemPresentation,
+} from './planner/plannerSelectors'
+import { getRoughCutExecutionPreview } from './execution/RoughCutExecutor'
 import type { MediaItem, ProjectOutputSettings } from './types'
 import { applyPlatformDefaults } from './utils/projectSettings'
 import { hasPlayableSource } from './utils/mediaSource'
@@ -76,14 +88,13 @@ function createProjectMediaDescriptor(mediaItem: MediaItem): ProjectMediaDescrip
   }
 }
 
-function createFileDescriptor(file: File): Omit<ProjectMediaDescriptor, 'id'> {
-  return {
-    filename: file.name,
-    fileSize: file.size,
-    mimeType: file.type || undefined,
-    lastModified: file.lastModified,
-  }
-}
+type PendingMediaRoleAction =
+  | {
+      kind: 'set-primary' | 'swap-primary-reference' | 'remove-main' | 'remove-library'
+      mediaItemId: string
+      filename: string
+    }
+  | null
 
 // Coordinates application-wide project, media, review, and AI suggestion state.
 function App() {
@@ -102,6 +113,11 @@ function App() {
   )
   const [isPrimarySourceConnecting, setIsPrimarySourceConnecting] = useState(false)
   const [primarySourceError, setPrimarySourceError] = useState<string | null>(null)
+  const [activeRoughCutPlanItemId, setActiveRoughCutPlanItemId] = useState<
+    string | null
+  >(null)
+  const [pendingMediaRoleAction, setPendingMediaRoleAction] =
+    useState<PendingMediaRoleAction>(null)
   const {
     project,
     selectedSuggestionIds,
@@ -118,12 +134,21 @@ function App() {
     setTimelineZoom,
     registerMediaAssets,
     updateMediaDuration,
-    choosePrimaryMedia,
-    connectPrimaryMedia,
-    chooseReferenceMedia,
+    setPrimaryMedia,
+    setReferenceMedia,
+    swapPrimaryAndReference,
+    clearReferenceMedia,
+    removeProjectMediaAsset,
+    connectProjectMedia,
     startProjectAnalysis,
     completeProjectAnalysis,
     failProjectAnalysis,
+    retryProjectAnalysis,
+    rebuildRoughCutPlan,
+    setRoughCutPlanItemStatus,
+    setAllRoughCutPlanItemsStatus,
+    restoreRoughCutPlanDefaults,
+    applyRoughCut,
     outputSettings,
     setOutputSettings,
     applyTrimOperation,
@@ -136,7 +161,11 @@ function App() {
     undo,
     redo,
   } = useProject()
-  const { toggle: togglePlayback } = usePlaybackControls()
+  const {
+    toggle: togglePlayback,
+    seek: seekPlayback,
+  } = usePlaybackControls()
+  const playbackEngine = usePlaybackEngine()
   const {
     items: mediaItems,
     activeItem: activeMediaItem,
@@ -145,7 +174,7 @@ function App() {
     addFiles,
     selectItem,
     removeItem,
-    clearLibrary,
+    restorePersistedItems,
   } = useMediaLibrary(setIsBackendConnected)
 
   const selectedStage = useMemo(
@@ -176,6 +205,20 @@ function App() {
     primaryMediaBinding?.asset.mediaItemId ?? null
   const referenceMediaItemId =
     referenceMediaBinding?.asset.mediaItemId ?? null
+  const persistedMediaItems = useMemo(
+    () => project.assets
+      .filter(
+        (asset) => asset.type === 'video' && Boolean(asset.mediaItemId),
+      )
+      .map((asset) => ({
+        id: asset.mediaItemId as string,
+        filename: asset.filename,
+        type: asset.type,
+        size: asset.fileSize,
+        lastModified: asset.lastModified,
+      })),
+    [project.assets],
+  )
   const primaryMediaItem = mediaItems.find(
     (mediaItem) => mediaItem.id === primaryMediaItemId,
   ) ?? null
@@ -187,26 +230,6 @@ function App() {
       projectAnalysis,
     ),
     [primaryMediaItem, projectAnalysis],
-  )
-  const primaryCandidateItemIds = useMemo(
-    () => mediaItems
-      .filter(
-        (mediaItem) =>
-          mediaItem.type === 'video' &&
-          canChoosePrimaryMedia(project, mediaItem.id),
-      )
-      .map((mediaItem) => mediaItem.id),
-    [mediaItems, project],
-  )
-  const referenceCandidateItemIds = useMemo(
-    () => mediaItems
-      .filter(
-        (mediaItem) =>
-          mediaItem.type === 'video' &&
-          canChooseReferenceMedia(project, mediaItem.id),
-      )
-      .map((mediaItem) => mediaItem.id),
-    [mediaItems, project],
   )
   const timelineClipMediaPresentations = useMemo(
     () => getTimelineClipMediaPresentations(project, editProjection),
@@ -232,6 +255,57 @@ function App() {
     () => getInspectorSelection(project, editProjection, selectedTimelineItemId),
     [editProjection, project, selectedTimelineItemId],
   )
+  const analysisReviewPresentation = useMemo(
+    () => getAnalysisReviewPresentation(
+      projectAnalysis,
+      editProjection,
+      primaryMediaItem?.previews?.previews ?? [],
+    ),
+    [editProjection, primaryMediaItem?.previews?.previews, projectAnalysis],
+  )
+  const analysisTimelineOverlays = useMemo(
+    () => getAnalysisTimelineOverlays(projectAnalysis, editProjection),
+    [editProjection, projectAnalysis],
+  )
+  const roughCutCandidates = useMemo(
+    () => getRoughCutCandidates(projectAnalysis, editProjection),
+    [editProjection, projectAnalysis],
+  )
+  const roughCutPlanPresentation = useMemo(
+    () => getRoughCutPlanPresentation(
+      project.roughCutPlan,
+      projectAnalysis.result,
+      editProjection,
+    ),
+    [editProjection, project.roughCutPlan, projectAnalysis.result],
+  )
+  const isPrimarySourceAvailable = Boolean(
+    primaryMediaItem && hasPlayableSource(primaryMediaItem),
+  )
+  const roughCutExecutionPreview = useMemo(
+    () => getRoughCutExecutionPreview(
+      project,
+      projectAnalysis,
+      editProjection,
+      isPrimarySourceAvailable,
+    ),
+    [
+      editProjection,
+      isPrimarySourceAvailable,
+      project,
+      projectAnalysis,
+    ],
+  )
+  const roughCutExecutionPresentation = useMemo(
+    () => getRoughCutExecutionPresentation(
+      roughCutExecutionPreview,
+      project.roughCutPlan,
+    ),
+    [project.roughCutPlan, roughCutExecutionPreview],
+  )
+  const activeRoughCutPlanItem = roughCutPlanPresentation.items.find(
+    (item) => item.item.id === activeRoughCutPlanItemId,
+  ) ?? null
   const selectedComputedClip = inspectorSelection?.computedClip ?? null
   const canRippleDelete = useMemo(
     () => canRippleDeleteTimelineItem(
@@ -269,6 +343,10 @@ function App() {
   }, [mediaItems, registerMediaAssets])
 
   useEffect(() => {
+    restorePersistedItems(persistedMediaItems)
+  }, [persistedMediaItems, restorePersistedItems])
+
+  useEffect(() => {
     if (isPrimarySourceConnecting && primaryMediaItem && hasPlayableSource(primaryMediaItem)) {
       setIsPrimarySourceConnecting(false)
       setPrimarySourceError(null)
@@ -280,47 +358,33 @@ function App() {
       return
     }
 
-    const shouldConnectPrimary = !primaryMediaItem
-    const candidateFile = Array.from(files).find(isVideoFile)
+    const primaryNeedsReconnect = Boolean(
+      primaryMediaItem && !hasPlayableSource(primaryMediaItem),
+    )
+    const candidateFile = Array.from(files).find(
+      (file) => isVideoFile(file) &&
+        file.name === primaryMediaItem?.filename &&
+        file.size === primaryMediaItem.size &&
+        file.lastModified === primaryMediaItem.lastModified,
+    )
 
-    if (shouldConnectPrimary && candidateFile) {
-      const mismatchError = getPrimaryMediaReconnectError(
-        project,
-        createFileDescriptor(candidateFile),
-      )
-
-      if (mismatchError) {
-        setPrimarySourceError(mismatchError)
-        return
-      }
-
+    if (primaryNeedsReconnect && candidateFile) {
       setIsPrimarySourceConnecting(true)
       setPrimarySourceError(null)
     }
 
     const importedItems = addFiles(files)
 
-    if (!shouldConnectPrimary) {
-      return
+    for (const item of importedItems) {
+      if (item.type === 'video') {
+        connectProjectMedia(createProjectMediaDescriptor(item))
+      }
     }
-
-    const primaryItem = importedItems.find((item) => item.type === 'video')
-
-    if (!primaryItem) {
-      setIsPrimarySourceConnecting(false)
-      return
-    }
-
-    connectPrimaryMedia(createProjectMediaDescriptor(primaryItem))
-    selectItem(primaryItem.id)
-    setPreviewMode('timeline')
   }, [
     addFiles,
-    connectPrimaryMedia,
+    connectProjectMedia,
     isPrimarySourceConnecting,
     primaryMediaItem,
-    project,
-    selectItem,
   ])
 
   const handleMediaSelect = useCallback((mediaItemId: string) => {
@@ -330,17 +394,131 @@ function App() {
   }, [clearSelection, selectItem])
 
   const handlePrimaryMediaChoose = useCallback((mediaItemId: string) => {
+    const item = mediaItems.find((candidate) => candidate.id === mediaItemId)
+
+    if (!item) {
+      return
+    }
+
+    if (primaryMediaItemId && primaryMediaItemId !== mediaItemId) {
+      setPendingMediaRoleAction({
+        kind: 'set-primary',
+        mediaItemId,
+        filename: item.filename,
+      })
+      return
+    }
+
+    setPrimaryMedia(mediaItemId)
     selectItem(mediaItemId)
-    choosePrimaryMedia(mediaItemId)
     setPreviewMode('timeline')
-  }, [choosePrimaryMedia, selectItem])
+  }, [mediaItems, primaryMediaItemId, selectItem, setPrimaryMedia])
 
   const handleReferenceMediaChoose = useCallback((mediaItemId: string) => {
-    chooseReferenceMedia(mediaItemId)
+    setReferenceMedia(mediaItemId)
     selectItem(mediaItemId)
     clearSelection()
     setPreviewMode('source')
-  }, [chooseReferenceMedia, clearSelection, selectItem])
+  }, [clearSelection, selectItem, setReferenceMedia])
+
+  const handleSwapPrimaryAndReference = useCallback(() => {
+    if (!primaryMediaItemId || !referenceMediaItemId) {
+      return
+    }
+
+    const referenceItem = mediaItems.find(
+      (item) => item.id === referenceMediaItemId,
+    )
+
+    if (!referenceItem) {
+      return
+    }
+
+    setPendingMediaRoleAction({
+      kind: 'swap-primary-reference',
+      mediaItemId: referenceItem.id,
+      filename: referenceItem.filename,
+    })
+  }, [mediaItems, primaryMediaItemId, referenceMediaItemId])
+
+  const handleClearReference = useCallback(() => {
+    const wasActiveReference = activeMediaItemId === referenceMediaItemId
+
+    clearReferenceMedia()
+
+    if (wasActiveReference && primaryMediaItemId) {
+      selectItem(primaryMediaItemId)
+      setPreviewMode('timeline')
+    }
+  }, [
+    activeMediaItemId,
+    clearReferenceMedia,
+    primaryMediaItemId,
+    referenceMediaItemId,
+    selectItem,
+  ])
+
+  const handleMediaRemoveRequest = useCallback((mediaItemId: string) => {
+    const item = mediaItems.find((candidate) => candidate.id === mediaItemId)
+
+    if (!item) {
+      return
+    }
+
+    setPendingMediaRoleAction({
+      kind: mediaItemId === primaryMediaItemId
+        ? 'remove-main'
+        : 'remove-library',
+      mediaItemId,
+      filename: item.filename,
+    })
+  }, [mediaItems, primaryMediaItemId])
+
+  const handleConfirmMediaRoleAction = useCallback(() => {
+    const action = pendingMediaRoleAction
+
+    if (!action) {
+      return
+    }
+
+    if (action.kind === 'set-primary') {
+      setPrimaryMedia(action.mediaItemId)
+      selectItem(action.mediaItemId)
+      setPreviewMode('timeline')
+    }
+
+    if (action.kind === 'swap-primary-reference') {
+      swapPrimaryAndReference()
+      selectItem(action.mediaItemId)
+      setPreviewMode('timeline')
+    }
+
+    if (action.kind === 'remove-main' || action.kind === 'remove-library') {
+      const wasPrimary = action.mediaItemId === primaryMediaItemId
+      const wasReference = action.mediaItemId === referenceMediaItemId
+
+      removeProjectMediaAsset(action.mediaItemId)
+      removeItem(action.mediaItemId)
+
+      if (wasPrimary) {
+        setPreviewMode('timeline')
+      } else if (wasReference && primaryMediaItemId) {
+        selectItem(primaryMediaItemId)
+        setPreviewMode('timeline')
+      }
+    }
+
+    setPendingMediaRoleAction(null)
+  }, [
+    pendingMediaRoleAction,
+    primaryMediaItemId,
+    referenceMediaItemId,
+    removeItem,
+    removeProjectMediaAsset,
+    selectItem,
+    setPrimaryMedia,
+    swapPrimaryAndReference,
+  ])
 
   const handleTimelineItemSelect = useCallback(
     (timelineItemId: string | null) => {
@@ -362,6 +540,47 @@ function App() {
       selectItem(primaryMediaItemId)
     }
   }, [primaryMediaItemId, selectItem])
+
+  const handleAnalysisSeek = useCallback((target: AnalysisSeekTarget) => {
+    if (target.timelineTime === null) {
+      return
+    }
+
+    setPreviewMode('timeline')
+    if (primaryMediaItemId) {
+      selectItem(primaryMediaItemId)
+    }
+    seekPlayback(target.timelineTime)
+  }, [primaryMediaItemId, seekPlayback, selectItem])
+
+  const handleRoughCutPlanItemActivate = useCallback((
+    item: RoughCutPlanItemPresentation,
+  ) => {
+    setActiveRoughCutPlanItemId(item.item.id)
+    handleAnalysisSeek(item.seekTarget)
+  }, [handleAnalysisSeek])
+
+  const handleApplyRoughCut = useCallback(() => {
+    const result = applyRoughCut(
+      playbackEngine.getCurrentTime(),
+      isPrimarySourceAvailable,
+    )
+
+    if (!result) {
+      setPreviewMode('timeline')
+      if (primaryMediaItemId) {
+        selectItem(primaryMediaItemId)
+      }
+    }
+
+    return result
+  }, [
+    applyRoughCut,
+    isPrimarySourceAvailable,
+    playbackEngine,
+    primaryMediaItemId,
+    selectItem,
+  ])
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -502,9 +721,9 @@ function App() {
           referenceAsset={referenceMediaBinding?.asset ?? null}
           primaryMediaItemId={primaryMediaItemId}
           referenceMediaItemId={referenceMediaItemId}
-          primaryCandidateItemIds={primaryCandidateItemIds}
-          referenceCandidateItemIds={referenceCandidateItemIds}
           analysis={projectAnalysis}
+          isPrimarySourceAvailable={isPrimarySourceAvailable}
+          onAnalysisRetry={retryProjectAnalysis}
           isPrimarySourceConnecting={isPrimarySourceConnecting}
           primarySourceError={primarySourceError}
           assetPresentations={mediaLibraryAssetPresentations}
@@ -516,8 +735,10 @@ function App() {
           onMediaSelect={handleMediaSelect}
           onPrimaryMediaChoose={handlePrimaryMediaChoose}
           onReferenceMediaChoose={handleReferenceMediaChoose}
-          onMediaRemove={removeItem}
-          onMediaClear={clearLibrary}
+          onSwapPrimaryAndReference={handleSwapPrimaryAndReference}
+          onClearReference={handleClearReference}
+          onReconnectMedia={handleReconnectMediaSource}
+          onMediaRemove={handleMediaRemoveRequest}
           onOutputSettingsChange={handleOutputSettingsChange}
           onStageSelect={handleStageSelect}
           onStageToggle={handleStageToggle}
@@ -543,8 +764,24 @@ function App() {
 	          selectedSubstage={selectedSubstage}
             aiSuggestions={reviewSuggestions}
             computedClips={editProjection.clips}
+            editProjection={editProjection}
             clipMediaPresentations={timelineClipMediaPresentations}
             clipThumbnailPresentations={timelineClipThumbnailPresentations}
+            analysis={projectAnalysis.result}
+            analysisReviewPresentation={analysisReviewPresentation}
+            analysisTimelineOverlays={analysisTimelineOverlays}
+            roughCutCandidates={roughCutCandidates}
+            roughCutPlanPresentation={roughCutPlanPresentation}
+            roughCutExecutionPresentation={
+              roughCutExecutionPresentation
+            }
+            activeRoughCutPlanItemId={activeRoughCutPlanItemId}
+            activeAnalysisTranscriptSegmentId={
+              activeRoughCutPlanItem?.relatedTranscriptSegmentId ?? null
+            }
+            activeAnalysisSilenceId={
+              activeRoughCutPlanItem?.item.analysisSourceId ?? null
+            }
             selectedAISuggestionIds={selectedSuggestionIds}
             activeAISuggestionId={activeSuggestionId}
             selectedTimelineItemId={selectedTimelineItemId}
@@ -555,6 +792,13 @@ function App() {
             isPrimarySourceConnecting={isPrimarySourceConnecting}
             primarySourceError={primarySourceError}
             onTimelinePreviewRequest={handleTimelinePreviewRequest}
+            onAnalysisSeek={handleAnalysisSeek}
+            onRoughCutPlanItemActivate={handleRoughCutPlanItemActivate}
+            onRoughCutPlanItemStatusChange={setRoughCutPlanItemStatus}
+            onAllRoughCutPlanItemsStatusChange={setAllRoughCutPlanItemsStatus}
+            onRestoreRoughCutPlanDefaults={restoreRoughCutPlanDefaults}
+            onRebuildRoughCutPlan={rebuildRoughCutPlan}
+            onApplyRoughCut={handleApplyRoughCut}
             onAISuggestionActivate={activateSuggestion}
             onTimelineItemSelect={handleTimelineItemSelect}
             onTimelineZoomChange={setTimelineZoom}
@@ -650,6 +894,71 @@ function App() {
         onClose={() => setIsAssistantOpen(false)}
         draftQuestion={assistantDraftQuestion}
       />
+      {pendingMediaRoleAction ? (
+        <MediaRoleConfirmationDialog
+          action={pendingMediaRoleAction}
+          onCancel={() => setPendingMediaRoleAction(null)}
+          onConfirm={handleConfirmMediaRoleAction}
+        />
+      ) : null}
+    </div>
+  )
+}
+
+function MediaRoleConfirmationDialog({
+  action,
+  onCancel,
+  onConfirm,
+}: {
+  action: Exclude<PendingMediaRoleAction, null>
+  onCancel: () => void
+  onConfirm: () => void
+}) {
+  const isMainChange = action.kind === 'set-primary' ||
+    action.kind === 'swap-primary-reference'
+  const isMainRemoval = action.kind === 'remove-main'
+  const title = isMainChange
+    ? 'Сменить главное видео?'
+    : isMainRemoval
+      ? 'Удалить главное видео?'
+      : `Удалить «${action.filename}» из медиатеки?`
+  const description = isMainChange
+    ? 'Текущий таймлайн и черновой монтаж относятся к другому видео. Для нового главного видео будет создан новый таймлайн и новый анализ.'
+    : isMainRemoval
+      ? 'Будут очищены таймлайн, история правок, анализ и черновой монтаж. Остальные видео останутся в медиатеке.'
+      : 'Файл будет удалён из медиатеки проекта. Это не затронет другие видео.'
+  const confirmLabel = isMainChange
+    ? 'Сменить главное видео'
+    : isMainRemoval
+      ? 'Удалить главное видео'
+      : 'Удалить'
+
+  return (
+    <div className="media-role-dialog-backdrop" role="presentation">
+      <section
+        className="media-role-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="media-role-dialog-title"
+        aria-describedby="media-role-dialog-description"
+      >
+        <h2 id="media-role-dialog-title">{title}</h2>
+        <p id="media-role-dialog-description">{description}</p>
+        <div className="media-role-dialog-actions">
+          <button type="button" className="ghost-button" onClick={onCancel}>
+            Отмена
+          </button>
+          <button
+            type="button"
+            className={isMainRemoval || action.kind === 'remove-library'
+              ? 'danger-button'
+              : 'primary-button'}
+            onClick={onConfirm}
+          >
+            {confirmLabel}
+          </button>
+        </div>
+      </section>
     </div>
   )
 }

@@ -36,6 +36,7 @@ import {
   type TimelineClipMediaPresentation,
   type TimelineClipThumbnailPresentation,
 } from '../../selectors/mediaAssetSelectors'
+import type { AnalysisTimelineOverlay } from '../../selectors/analysisReviewSelectors'
 import {
   KEYBOARD_SEEK_SECONDS,
   SNAP_ENTER_THRESHOLD_PIXELS,
@@ -70,6 +71,8 @@ type VideoTimelineProps = {
   computedClips: ComputedClip[]
   clipMediaPresentations: Record<string, TimelineClipMediaPresentation>
   clipThumbnailPresentations: Record<string, TimelineClipThumbnailPresentation>
+  analysisOverlays: AnalysisTimelineOverlay[]
+  activeAnalysisSilenceId: string | null
   selectedAISuggestionIds: string[]
   activeAISuggestionId: string | null
   selectedTimelineItemId: string | null
@@ -104,7 +107,9 @@ type TimelineHeaderProps = {
   computedClips: ComputedClip[]
   selectedTimelineItemId: string | null
   canRippleDelete: boolean
+  showAnalysisMarkers: boolean
   onZoomChange: (level: number) => void
+  onShowAnalysisMarkersChange: (show: boolean) => void
   onSplitCommit: (timelineItemId: string, splitTime: number) => void
   onRippleDeleteCommit: (
     timelineItemId: string,
@@ -197,6 +202,8 @@ export function VideoTimeline({
   computedClips,
   clipMediaPresentations,
   clipThumbnailPresentations,
+  analysisOverlays,
+  activeAnalysisSilenceId,
   selectedAISuggestionIds,
   activeAISuggestionId,
   selectedTimelineItemId,
@@ -223,6 +230,7 @@ export function VideoTimeline({
   const [activeMoveDragItemId, setActiveMoveDragItemId] = useState<string | null>(null)
   const [moveDragPreviewEnd, setMoveDragPreviewEnd] = useState<number | null>(null)
   const [snapGuide, setSnapGuide] = useState<SnapGuide | null>(null)
+  const [showAnalysisMarkers, setShowAnalysisMarkers] = useState(true)
   const projectedTimelineEnd = computedClips.length
     ? Math.max(...computedClips.map((clip) => clip.visibleEnd))
     : 0
@@ -456,7 +464,9 @@ export function VideoTimeline({
         computedClips={computedClips}
         selectedTimelineItemId={selectedTimelineItemId}
         canRippleDelete={canRippleDelete}
+        showAnalysisMarkers={showAnalysisMarkers}
         onZoomChange={handleZoomChange}
+        onShowAnalysisMarkersChange={setShowAnalysisMarkers}
         onSplitCommit={onSplitCommit}
         onRippleDeleteCommit={onRippleDeleteCommit}
       />
@@ -525,6 +535,13 @@ export function VideoTimeline({
               deletedRanges={computedClips.flatMap((clip) => clip.deletedRanges)}
               geometry={geometry}
             />
+            {showAnalysisMarkers ? (
+              <TimelineAnalysisOverlays
+                overlays={analysisOverlays}
+                geometry={geometry}
+                activeSilenceId={activeAnalysisSilenceId}
+              />
+            ) : null}
             <TimelinePlayhead
               duration={safeDuration}
               geometry={geometry}
@@ -587,6 +604,45 @@ function TimelineDeleteOverlays({
   )
 }
 
+function TimelineAnalysisOverlays({
+  overlays,
+  geometry,
+  activeSilenceId,
+}: {
+  overlays: AnalysisTimelineOverlay[]
+  geometry: TimelineGeometry
+  activeSilenceId: string | null
+}) {
+  return (
+    <div className="timeline-analysis-overlay-layer" aria-hidden="true">
+      {overlays.map((overlay) => (
+        <span
+          key={overlay.id}
+          className="timeline-analysis-overlay"
+          data-analysis-marker={overlay.kind}
+          data-active={
+            overlay.kind === 'silence-range' &&
+            overlay.sourceId === activeSilenceId
+              ? true
+              : undefined
+          }
+          style={{
+            left: `${geometry.timeToTimelineX(overlay.timelineStart)}px`,
+            width: overlay.kind === 'silence-range'
+              ? `${Math.max(
+                geometry.durationToPixels(
+                  overlay.timelineEnd - overlay.timelineStart,
+                ),
+                2,
+              )}px`
+              : undefined,
+          }}
+        />
+      ))}
+    </div>
+  )
+}
+
 function isTimelineItemTarget(target: EventTarget) {
   return target instanceof Element &&
     Boolean(target.closest('.timeline-item, .timeline-video-strip'))
@@ -602,7 +658,9 @@ function TimelineHeader({
   computedClips,
   selectedTimelineItemId,
   canRippleDelete,
+  showAnalysisMarkers,
   onZoomChange,
+  onShowAnalysisMarkersChange,
   onSplitCommit,
   onRippleDeleteCommit,
 }: TimelineHeaderProps) {
@@ -628,6 +686,14 @@ function TimelineHeader({
         </span>
       </div>
       <div className="timeline-zoom" aria-label="Масштаб таймлайна">
+        <label className="timeline-analysis-toggle">
+          <input
+            type="checkbox"
+            checked={showAnalysisMarkers}
+            onChange={(event) => onShowAnalysisMarkersChange(event.currentTarget.checked)}
+          />
+          <span>Метки анализа</span>
+        </label>
         <span className="timeline-action-tooltip" data-tooltip="Split at playhead">
           <button
             type="button"

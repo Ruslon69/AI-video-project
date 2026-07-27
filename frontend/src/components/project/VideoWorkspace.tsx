@@ -6,7 +6,14 @@ import type {
   ProjectOutputSettings,
   VideoMetadata,
 } from '../../types'
-import type { ComputedClip } from '../../selectors/editProjection'
+import type { ComputedClip, EditProjection } from '../../selectors/editProjection'
+import type { ProjectAnalysis } from '../../analysis/models'
+import type {
+  AnalysisReviewPresentation,
+  AnalysisSeekTarget,
+  AnalysisTimelineOverlay,
+  RoughCutCandidate,
+} from '../../selectors/analysisReviewSelectors'
 import type {
   TimelineClipMediaPresentation,
   TimelineClipThumbnailPresentation,
@@ -29,6 +36,16 @@ import {
 import { hasPlayableSource } from '../../utils/mediaSource'
 import { statusLabels } from '../../utils/projectState'
 import { VideoTimeline } from '../timeline/VideoTimeline'
+import { AnalysisReviewPanel } from './AnalysisReviewPanel'
+import { RoughCutPlanPanel } from './RoughCutPlanPanel'
+import type {
+  RoughCutExecutionPresentation,
+  RoughCutPlanItemPresentation,
+  RoughCutPlanPresentation,
+} from '../../planner/plannerSelectors'
+import type {
+  RoughCutPlanItemReviewStatus,
+} from '../../planner/models'
 import type { TimelineZoomState } from '../../timeline/TimelineViewportState'
 import {
   usePlaybackControls,
@@ -46,8 +63,18 @@ type VideoWorkspaceProps = {
   selectedSubstage: EditingSubstage
   aiSuggestions: AISuggestion[]
   computedClips: ComputedClip[]
+  editProjection: EditProjection
   clipMediaPresentations: Record<string, TimelineClipMediaPresentation>
   clipThumbnailPresentations: Record<string, TimelineClipThumbnailPresentation>
+  analysis: ProjectAnalysis | null
+  analysisReviewPresentation: AnalysisReviewPresentation
+  analysisTimelineOverlays: AnalysisTimelineOverlay[]
+  roughCutCandidates: RoughCutCandidate[]
+  roughCutPlanPresentation: RoughCutPlanPresentation
+  roughCutExecutionPresentation: RoughCutExecutionPresentation
+  activeRoughCutPlanItemId: string | null
+  activeAnalysisTranscriptSegmentId: number | null
+  activeAnalysisSilenceId: string | null
   selectedAISuggestionIds: string[]
   activeAISuggestionId: string | null
   selectedTimelineItemId: string | null
@@ -58,6 +85,18 @@ type VideoWorkspaceProps = {
   isPrimarySourceConnecting: boolean
   primarySourceError: string | null
   onTimelinePreviewRequest: () => void
+  onAnalysisSeek: (target: AnalysisSeekTarget) => void
+  onRoughCutPlanItemActivate: (item: RoughCutPlanItemPresentation) => void
+  onRoughCutPlanItemStatusChange: (
+    itemId: string,
+    status: RoughCutPlanItemReviewStatus,
+  ) => void
+  onAllRoughCutPlanItemsStatusChange: (
+    status: RoughCutPlanItemReviewStatus,
+  ) => void
+  onRestoreRoughCutPlanDefaults: () => void
+  onRebuildRoughCutPlan: () => void
+  onApplyRoughCut: () => string | null
   onAISuggestionActivate: (suggestionId: string) => void
   onTimelineItemSelect: (timelineItemId: string | null) => void
   onTimelineZoomChange: (level: number) => void
@@ -86,8 +125,18 @@ export function VideoWorkspace({
   selectedSubstage,
   aiSuggestions,
   computedClips,
+  editProjection,
   clipMediaPresentations,
   clipThumbnailPresentations,
+  analysis,
+  analysisReviewPresentation,
+  analysisTimelineOverlays,
+  roughCutCandidates,
+  roughCutPlanPresentation,
+  roughCutExecutionPresentation,
+  activeRoughCutPlanItemId,
+  activeAnalysisTranscriptSegmentId,
+  activeAnalysisSilenceId,
   selectedAISuggestionIds,
   activeAISuggestionId,
   selectedTimelineItemId,
@@ -98,6 +147,13 @@ export function VideoWorkspace({
   isPrimarySourceConnecting,
   primarySourceError,
   onTimelinePreviewRequest,
+  onAnalysisSeek,
+  onRoughCutPlanItemActivate,
+  onRoughCutPlanItemStatusChange,
+  onAllRoughCutPlanItemsStatusChange,
+  onRestoreRoughCutPlanDefaults,
+  onRebuildRoughCutPlan,
+  onApplyRoughCut,
   onAISuggestionActivate,
   onTimelineItemSelect,
   onTimelineZoomChange,
@@ -147,6 +203,8 @@ export function VideoWorkspace({
         computedClips={computedClips}
         clipMediaPresentations={clipMediaPresentations}
         clipThumbnailPresentations={clipThumbnailPresentations}
+        analysisTimelineOverlays={analysisTimelineOverlays}
+        activeAnalysisSilenceId={activeAnalysisSilenceId}
         selectedAISuggestionIds={selectedAISuggestionIds}
         activeAISuggestionId={activeAISuggestionId}
         selectedTimelineItemId={selectedTimelineItemId}
@@ -164,6 +222,27 @@ export function VideoWorkspace({
         canRippleDelete={canRippleDelete}
         onRippleDeleteCommit={onRippleDeleteCommit}
         onMoveCommit={onMoveCommit}
+      />
+      <AnalysisReviewPanel
+        analysis={analysis}
+        presentation={analysisReviewPresentation}
+        projection={editProjection}
+        candidates={roughCutCandidates}
+        onSeek={onAnalysisSeek}
+        activeTranscriptSegmentId={activeAnalysisTranscriptSegmentId}
+        activePauseId={activeAnalysisSilenceId}
+      />
+      <RoughCutPlanPanel
+        presentation={roughCutPlanPresentation}
+        activeItemId={activeRoughCutPlanItemId}
+        canRebuild={Boolean(analysis)}
+        onActivate={onRoughCutPlanItemActivate}
+        onItemStatusChange={onRoughCutPlanItemStatusChange}
+        onAllStatusChange={onAllRoughCutPlanItemsStatusChange}
+        onRestoreDefaults={onRestoreRoughCutPlanDefaults}
+        onRebuild={onRebuildRoughCutPlan}
+        execution={roughCutExecutionPresentation}
+        onApply={onApplyRoughCut}
       />
       <p className="workspace-file">
         Активный подэтап: {selectedSubstage.title}
@@ -185,6 +264,8 @@ function MediaPreview({
   computedClips,
   clipMediaPresentations,
   clipThumbnailPresentations,
+  analysisTimelineOverlays,
+  activeAnalysisSilenceId,
   selectedAISuggestionIds,
   activeAISuggestionId,
   selectedTimelineItemId,
@@ -211,6 +292,8 @@ function MediaPreview({
   computedClips: ComputedClip[]
   clipMediaPresentations: Record<string, TimelineClipMediaPresentation>
   clipThumbnailPresentations: Record<string, TimelineClipThumbnailPresentation>
+  analysisTimelineOverlays: AnalysisTimelineOverlay[]
+  activeAnalysisSilenceId: string | null
   selectedAISuggestionIds: string[]
   activeAISuggestionId: string | null
   selectedTimelineItemId: string | null
@@ -382,6 +465,8 @@ function MediaPreview({
           computedClips={computedClips}
           clipMediaPresentations={clipMediaPresentations}
           clipThumbnailPresentations={clipThumbnailPresentations}
+          analysisOverlays={analysisTimelineOverlays}
+          activeAnalysisSilenceId={activeAnalysisSilenceId}
           selectedAISuggestionIds={selectedAISuggestionIds}
           activeAISuggestionId={activeAISuggestionId}
           selectedTimelineItemId={selectedTimelineItemId}
