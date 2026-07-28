@@ -24,6 +24,7 @@ export function RoughCutPlanPanel({
   activeItemId,
   canRebuild,
   onActivate,
+  onPreviewChange,
   onItemStatusChange,
   onAllStatusChange,
   onRestoreDefaults,
@@ -35,6 +36,7 @@ export function RoughCutPlanPanel({
   activeItemId: string | null
   canRebuild: boolean
   onActivate: (item: RoughCutPlanItemPresentation) => void
+  onPreviewChange: (item: RoughCutPlanItemPresentation | null) => void
   onItemStatusChange: (
     itemId: string,
     status: RoughCutPlanItemReviewStatus,
@@ -152,6 +154,7 @@ export function RoughCutPlanPanel({
                     presentation={item}
                     isActive={activeItemId === item.item.id}
                     onActivate={onActivate}
+                    onPreviewChange={onPreviewChange}
                     onStatusChange={onItemStatusChange}
                   />
                 ))}
@@ -202,10 +205,16 @@ function RoughCutPlanSummary({
       </div>
       <p className="rough-cut-plan-progress">
         Одобрено: {plan.approvedCount}. Отклонено: {plan.rejectedCount}. На проверке: {plan.pendingCount}.
-        {' '}Самая длинная пауза: {formatDuration(summary.longestPause)}.
-        {' '}Средняя пауза: {formatDuration(summary.averagePauseDuration)}.
-        {' '}Приоритет: наивысший — {summary.byPriority.highest}, высокий — {summary.byPriority.high}, низкий — {summary.byPriority.low}.
+        {' '}Пропущено планировщиком: {summary.ignoredPauseCount}.
+        {' '}Приоритет: высокий — {summary.byPriority.high + summary.byPriority.highest},
+        {' '}средний — {summary.byPriority.medium}, низкий — {summary.byPriority.low}.
       </p>
+      {summary.highestConfidenceSuggestion ? (
+        <p className="rough-cut-plan-best">
+          Самое уверенное предложение: {summary.highestConfidenceSuggestion.reasonLabel}
+          {' · '}{Math.round(summary.highestConfidenceSuggestion.confidence * 100)}%.
+        </p>
+      ) : null}
     </>
   )
 }
@@ -214,11 +223,13 @@ function RoughCutPlanItemRow({
   presentation,
   isActive,
   onActivate,
+  onPreviewChange,
   onStatusChange,
 }: {
   presentation: RoughCutPlanItemPresentation
   isActive: boolean
   onActivate: (item: RoughCutPlanItemPresentation) => void
+  onPreviewChange: (item: RoughCutPlanItemPresentation | null) => void
   onStatusChange: (
     itemId: string,
     status: RoughCutPlanItemReviewStatus,
@@ -236,6 +247,14 @@ function RoughCutPlanItemRow({
       data-priority={item.priority}
       data-active={isActive || undefined}
       data-execution-status={item.executionStatus}
+      onMouseEnter={() => onPreviewChange(presentation)}
+      onMouseLeave={() => onPreviewChange(null)}
+      onFocusCapture={() => onPreviewChange(presentation)}
+      onBlurCapture={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) {
+          onPreviewChange(null)
+        }
+      }}
     >
       <button
         type="button"
@@ -252,11 +271,34 @@ function RoughCutPlanItemRow({
           </small>
         </span>
         <span className="rough-cut-plan-item-meta">
-          {presentation.priorityLabel} · {presentation.confidencePercent}%
+          {presentation.priorityLabel} · уверенность {presentation.confidencePercent}%
         </span>
         <span className="rough-cut-plan-item-explanation">
           {presentation.explanation}
         </span>
+        {presentation.precedingSpeechContext ||
+        presentation.followingSpeechContext ? (
+          <span className="rough-cut-plan-speech-context">
+            {presentation.precedingSpeechContext ? (
+              <span>«{presentation.precedingSpeechContext}»</span>
+            ) : null}
+            <span className="rough-cut-plan-context-arrow" aria-hidden="true">
+              ↓
+            </span>
+            <span>{presentation.reasonLabel}</span>
+            <span className="rough-cut-plan-context-arrow" aria-hidden="true">
+              ↓
+            </span>
+            <strong>Убрать {formatDuration(item.estimatedImpactSeconds)}</strong>
+            {presentation.followingSpeechContext ? (
+              <small>Далее: «{presentation.followingSpeechContext}»</small>
+            ) : null}
+          </span>
+        ) : (
+          <span className="rough-cut-plan-impact">
+            Убрать {formatDuration(item.estimatedImpactSeconds)}
+          </span>
+        )}
         {!isAvailable ? (
           <span className="rough-cut-plan-item-unavailable">
             Этот фрагмент отсутствует в текущем монтаже

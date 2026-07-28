@@ -51,7 +51,7 @@ export function registerProjectMediaAssets(
     )
 
     if (existingAsset) {
-      const sourceClip = videoTrack.clips.find(
+      let sourceClip = videoTrack.clips.find(
         (clip) => clip.assetId === existingAsset.id,
       )
       const duration = getMediaDuration(
@@ -71,6 +71,17 @@ export function registerProjectMediaAssets(
         existingAsset.fileSize = mediaItem.fileSize
         existingAsset.mimeType = mediaItem.mimeType
         existingAsset.lastModified = mediaItem.lastModified
+        didChange = true
+      }
+
+      if (!sourceClip) {
+        sourceClip = createSourceClip(
+          existingAsset,
+          videoTrack.id,
+          mediaItem.filename,
+          duration,
+        )
+        videoTrack.clips.push(sourceClip)
         didChange = true
       }
 
@@ -106,24 +117,12 @@ export function registerProjectMediaAssets(
       lastModified: mediaItem.lastModified,
       createdAt,
     })
-    videoTrack.clips.push({
-      id: `clip-media-${mediaItem.id}`,
-      assetId,
-      trackId: videoTrack.id,
-      name: mediaItem.filename,
-      source: {
-        start: 0,
-        end: duration,
-      },
-      timeline: {
-        start: 0,
-        end: duration,
-      },
-      playbackRate: 1,
-      enabled: true,
-      createdAt,
-      updatedAt: createdAt,
-    })
+    videoTrack.clips.push(createSourceClip(
+      assets[assets.length - 1],
+      videoTrack.id,
+      mediaItem.filename,
+      duration,
+    ))
     didChange = true
   }
 
@@ -354,10 +353,30 @@ export function getPrimaryProjectMediaBinding(
   )
 }
 
+export function getPrimaryProjectMediaAsset(
+  project: Project,
+): ProjectAsset | null {
+  const asset = getProjectMediaAssetForRole(
+    project,
+    getProjectMediaRoles(project).primaryAssetId,
+  )
+
+  return asset && !isInitialPrimaryAsset(asset) ? asset : null
+}
+
 export function getReferenceProjectMediaBinding(
   project: Project,
 ): ProjectMediaBinding | null {
   return getProjectMediaBindingForAssetId(
+    project,
+    getProjectMediaRoles(project).referenceAssetId,
+  )
+}
+
+export function getReferenceProjectMediaAsset(
+  project: Project,
+): ProjectAsset | null {
+  return getProjectMediaAssetForRole(
     project,
     getProjectMediaRoles(project).referenceAssetId,
   )
@@ -491,13 +510,11 @@ export function getPrimaryMediaReconnectError(
   project: Project,
   mediaItem: Omit<ProjectMediaDescriptor, 'id'>,
 ) {
-  const primaryBinding = getPrimaryProjectMediaBinding(project)
+  const asset = getPrimaryProjectMediaAsset(project)
 
-  if (!primaryBinding || isInitialPrimaryPlaceholder(primaryBinding)) {
+  if (!asset || isInitialPrimaryAsset(asset)) {
     return null
   }
-
-  const asset = primaryBinding.asset
 
   if (asset.filename && asset.filename !== mediaItem.filename) {
     return `Selected file does not match the main video (${asset.filename}).`
@@ -534,90 +551,98 @@ export function reconnectPrimaryProjectMedia(
   project: Project,
   mediaItem: ProjectMediaDescriptor,
 ): Project {
-  const primaryBinding = getPrimaryProjectMediaBinding(project)
+  const primaryAsset = getPrimaryProjectMediaAsset(project)
 
   if (
-    !primaryBinding ||
+    !primaryAsset ||
     getPrimaryMediaReconnectError(project, mediaItem)
   ) {
     return project
   }
 
-  const updatedAt = new Date().toISOString()
-
-  return {
+  return reconnectProjectMediaAsset({
     ...project,
     assets: project.assets.map((asset) =>
-      asset.id === primaryBinding.asset.id
+      asset.id === primaryAsset.id
         ? {
             ...asset,
             mediaItemId: mediaItem.id,
-            filename: mediaItem.filename,
-            fileSize: mediaItem.fileSize,
-            mimeType: mediaItem.mimeType,
-            lastModified: mediaItem.lastModified,
           }
         : asset,
     ),
-    timeline: {
-      ...project.timeline,
-      tracks: project.timeline.tracks.map((track) => ({
-        ...track,
-        clips: track.clips.map((clip) =>
-          clip.id === primaryBinding.sourceClip.id
-            ? {
-                ...clip,
-                name: mediaItem.filename,
-                updatedAt,
-              }
-            : clip,
-        ),
-      })),
-      updatedAt,
-    },
-    updatedAt,
-  }
+  }, mediaItem)
 }
 
 export function reconnectProjectMediaAsset(
   project: Project,
   mediaItem: ProjectMediaDescriptor,
 ): Project {
-  const binding = getProjectMediaBinding(project, mediaItem.id)
+  const asset = project.assets.find(
+    (candidate) => candidate.mediaItemId === mediaItem.id,
+  )
 
-  if (!binding) {
+  if (!asset) {
     return project
   }
 
   const updatedAt = new Date().toISOString()
+  const videoTrack = project.timeline.tracks.find(
+    (track) => track.type === 'video',
+  )
+  const existingSourceClip = project.timeline.tracks
+    .flatMap((track) => track.clips)
+    .find((clip) => clip.assetId === asset.id)
+  const duration = getMediaDuration(
+    mediaItem.duration,
+    asset.duration ?? existingSourceClip?.source.end ?? 0,
+  )
+  const sourceClip = existingSourceClip ?? (
+    videoTrack
+      ? createSourceClip(
+          asset,
+          videoTrack.id,
+          mediaItem.filename,
+          duration,
+        )
+      : null
+  )
 
   return {
     ...project,
-    assets: project.assets.map((asset) =>
-      asset.id === binding.asset.id
+    assets: project.assets.map((candidate) =>
+      candidate.id === asset.id
         ? {
-            ...asset,
+            ...candidate,
             filename: mediaItem.filename,
-            duration: mediaItem.duration ?? asset.duration,
+            duration,
             fileSize: mediaItem.fileSize,
             mimeType: mediaItem.mimeType,
             lastModified: mediaItem.lastModified,
           }
-        : asset,
+        : candidate,
     ),
     timeline: {
       ...project.timeline,
       tracks: project.timeline.tracks.map((track) => ({
         ...track,
-        clips: track.clips.map((clip) =>
-          clip.id === binding.sourceClip.id
-            ? updateSourceClip(
-                clip,
-                mediaItem.filename,
-                mediaItem.duration ?? clip.source.end,
-              )
-            : clip,
-        ),
+        clips: [
+          ...track.clips.map((clip) =>
+            clip.id === sourceClip?.id
+              ? updateSourceClip(
+                  clip,
+                  mediaItem.filename,
+                  duration,
+                )
+              : clip,
+          ),
+          ...(
+            sourceClip &&
+            !existingSourceClip &&
+            track.id === sourceClip.trackId
+              ? [sourceClip]
+              : []
+          ),
+        ],
       })),
       updatedAt,
     },
@@ -767,14 +792,18 @@ function getValidRoleAsset(
   project: Project,
   assetId: string | null | undefined,
 ) {
+  return getProjectMediaAssetForRole(project, assetId)
+}
+
+function getProjectMediaAssetForRole(
+  project: Project,
+  assetId: string | null | undefined,
+) {
   const asset = assetId
     ? project.assets.find((candidate) => candidate.id === assetId)
     : null
 
-  return asset?.type === 'video' &&
-    getProjectMediaBindingForAssetId(project, asset.id)
-      ? asset
-      : null
+  return asset?.type === 'video' ? asset : null
 }
 
 function inferPrimaryAsset(project: Project) {
@@ -841,6 +870,36 @@ function updateSourceClip(
     },
     updatedAt: new Date().toISOString(),
   }
+}
+
+function createSourceClip(
+  asset: ProjectAsset,
+  trackId: string,
+  filename: string,
+  duration: number,
+): Clip {
+  return {
+    id: `clip-media-${asset.mediaItemId}`,
+    assetId: asset.id,
+    trackId,
+    name: filename,
+    source: {
+      start: 0,
+      end: duration,
+    },
+    timeline: {
+      start: 0,
+      end: duration,
+    },
+    playbackRate: 1,
+    enabled: true,
+    createdAt: asset.createdAt,
+    updatedAt: new Date().toISOString(),
+  }
+}
+
+function isInitialPrimaryAsset(asset: ProjectAsset) {
+  return !asset.mediaItemId && asset.filename === 'Primary video'
 }
 
 function isInitialFullSourceTimelineItem(

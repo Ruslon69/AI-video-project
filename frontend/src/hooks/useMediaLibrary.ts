@@ -4,7 +4,11 @@ import {
   uploadVideoPreviews,
 } from '../services/api'
 import type { MediaFileRejection, MediaItem, MediaStatus, MediaType } from '../types'
-import { getMediaIdentity, hasPlayableSource } from '../utils/mediaSource'
+import {
+  getMediaIdentity,
+  hasPlayableSource,
+  matchesPersistedMediaFile,
+} from '../utils/mediaSource'
 import { getMediaStatusProgress } from '../utils/mediaStatus'
 
 const MAX_ACTIVE_PREVIEW_REQUESTS = 2
@@ -307,9 +311,17 @@ export function useMediaLibrary(
         continue
       }
 
-	      const reconnectableItem = itemsRef.current.find((item) => (
-	        getMediaIdentity(item) === duplicateKey && !hasPlayableSource(item)
-	      ))
+      const unavailableMatches = itemsRef.current.filter((item) => (
+        !hasPlayableSource(item) &&
+        matchesPersistedMediaFile(item, file)
+      ))
+      const reconnectableItem = unavailableMatches.find(
+        (item) => getMediaIdentity(item) === duplicateKey,
+      ) ?? (
+        unavailableMatches.length === 1
+          ? unavailableMatches[0]
+          : null
+      )
 
       if (reconnectableItem) {
         const objectUrl = URL.createObjectURL(file)
@@ -318,15 +330,18 @@ export function useMediaLibrary(
           URL.revokeObjectURL(reconnectableItem.objectUrl)
         }
 
-	      reconnectedItems.push({
-	          ...reconnectableItem,
-	          file,
-	          objectUrl,
-	          status: reconnectableItem.metadata ? 'ready' : 'uploading',
-	          progress: reconnectableItem.metadata
-	            ? getMediaStatusProgress('ready')
-	            : getMediaStatusProgress('uploading'),
-	          errorMessage: undefined,
+        reconnectedItems.push({
+          ...reconnectableItem,
+          file,
+          filename: file.name,
+          size: file.size,
+          lastModified: file.lastModified,
+          objectUrl,
+          status: reconnectableItem.metadata ? 'ready' : 'uploading',
+          progress: reconnectableItem.metadata
+            ? getMediaStatusProgress('ready')
+            : getMediaStatusProgress('uploading'),
+          errorMessage: undefined,
         })
         existingKeys.add(duplicateKey)
         pendingDuplicateKeysRef.current.add(duplicateKey)

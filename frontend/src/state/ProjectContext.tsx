@@ -34,6 +34,7 @@ import {
   clearReferenceProjectMedia,
   choosePrimaryProjectMedia,
   chooseReferenceProjectMedia,
+  getPrimaryProjectMediaAsset,
   getPrimaryProjectMediaBinding,
   reconnectProjectMediaAsset,
   registerProjectMediaAssets,
@@ -615,13 +616,13 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
   const setPrimaryMedia = useCallback((mediaItemId: string) => {
     setProjectState((currentState) => {
       const previousPrimaryAssetId =
-        getPrimaryProjectMediaBinding(currentState.project)?.asset.id ?? null
+        getPrimaryProjectMediaAsset(currentState.project)?.id ?? null
       const projectWithRole = choosePrimaryProjectMedia(
         currentState.project,
         mediaItemId,
       )
       const nextPrimaryAssetId =
-        getPrimaryProjectMediaBinding(projectWithRole)?.asset.id ?? null
+        getPrimaryProjectMediaAsset(projectWithRole)?.id ?? null
 
       if (!nextPrimaryAssetId || nextPrimaryAssetId === previousPrimaryAssetId) {
         return currentState
@@ -669,12 +670,12 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
       const targetBinding = currentState.project.assets.find(
         (asset) => asset.mediaItemId === mediaItemId,
       )
-      const primaryBinding = getPrimaryProjectMediaBinding(
+      const primaryAsset = getPrimaryProjectMediaAsset(
         currentState.project,
       )
       const shouldResetEditor = Boolean(
         targetBinding &&
-        primaryBinding?.asset.id === targetBinding.id,
+        primaryAsset?.id === targetBinding.id,
       )
       const projectBeforeRemoval = shouldResetEditor
         ? resetSourceDependentProject(
@@ -730,7 +731,7 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
   const startProjectAnalysis = useCallback((sourceAssetId: string) => {
     setProjectState((currentState) => {
       const primaryAssetId =
-        getPrimaryProjectMediaBinding(currentState.project)?.asset.id ?? null
+        getPrimaryProjectMediaAsset(currentState.project)?.id ?? null
 
       if (!sourceAssetId || sourceAssetId !== primaryAssetId) {
         return currentState
@@ -764,7 +765,7 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
   ) => {
     setProjectState((currentState) => {
       const primaryAssetId =
-        getPrimaryProjectMediaBinding(currentState.project)?.asset.id ?? null
+        getPrimaryProjectMediaAsset(currentState.project)?.id ?? null
       const activeAnalysis = currentState.project.analysis
 
       if (
@@ -803,7 +804,7 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
   ) => {
     setProjectState((currentState) => {
       const primaryAssetId =
-        getPrimaryProjectMediaBinding(currentState.project)?.asset.id ?? null
+        getPrimaryProjectMediaAsset(currentState.project)?.id ?? null
       const activeAnalysis = currentState.project.analysis
 
       if (
@@ -837,7 +838,7 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
   const retryProjectAnalysis = useCallback(() => {
     setProjectState((currentState) => {
       const primaryAssetId =
-        getPrimaryProjectMediaBinding(currentState.project)?.asset.id ?? null
+        getPrimaryProjectMediaAsset(currentState.project)?.id ?? null
       const analysis = currentState.project.analysis
 
       if (
@@ -1057,7 +1058,7 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
         duration,
       )
       const primaryMediaItemId =
-        getPrimaryProjectMediaBinding(project)?.asset.mediaItemId
+        getPrimaryProjectMediaAsset(project)?.mediaItemId
 
       return primaryMediaItemId === mediaItemId
         ? addInitialPrimaryTimelineItem(currentState, project)

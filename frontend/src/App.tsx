@@ -38,8 +38,8 @@ import {
 import { checkBackendHealth } from './services/api'
 import { useProject } from './state/useProject'
 import {
-  getPrimaryProjectMediaBinding,
-  getReferenceProjectMediaBinding,
+  getPrimaryProjectMediaAsset,
+  getReferenceProjectMediaAsset,
   type ProjectMediaDescriptor,
 } from './state/ProjectMedia'
 import { createIdleProjectAnalysisState } from './analysis/models'
@@ -53,7 +53,10 @@ import {
 import { getRoughCutExecutionPreview } from './execution/RoughCutExecutor'
 import type { MediaItem, ProjectOutputSettings } from './types'
 import { applyPlatformDefaults } from './utils/projectSettings'
-import { hasPlayableSource } from './utils/mediaSource'
+import {
+  hasPlayableSource,
+  matchesPersistedMediaFile,
+} from './utils/mediaSource'
 import {
   createReviewVersion,
   deleteSelectedSubstageVersion,
@@ -114,6 +117,9 @@ function App() {
   const [isPrimarySourceConnecting, setIsPrimarySourceConnecting] = useState(false)
   const [primarySourceError, setPrimarySourceError] = useState<string | null>(null)
   const [activeRoughCutPlanItemId, setActiveRoughCutPlanItemId] = useState<
+    string | null
+  >(null)
+  const [previewRoughCutPlanItemId, setPreviewRoughCutPlanItemId] = useState<
     string | null
   >(null)
   const [pendingMediaRoleAction, setPendingMediaRoleAction] =
@@ -193,18 +199,18 @@ function App() {
     () => buildEditProjection(project),
     [project],
   )
-  const primaryMediaBinding = useMemo(
-    () => getPrimaryProjectMediaBinding(project),
+  const primaryMediaAsset = useMemo(
+    () => getPrimaryProjectMediaAsset(project),
     [project],
   )
-  const referenceMediaBinding = useMemo(
-    () => getReferenceProjectMediaBinding(project),
+  const referenceMediaAsset = useMemo(
+    () => getReferenceProjectMediaAsset(project),
     [project],
   )
   const primaryMediaItemId =
-    primaryMediaBinding?.asset.mediaItemId ?? null
+    primaryMediaAsset?.mediaItemId ?? null
   const referenceMediaItemId =
-    referenceMediaBinding?.asset.mediaItemId ?? null
+    referenceMediaAsset?.mediaItemId ?? null
   const persistedMediaItems = useMemo(
     () => project.assets
       .filter(
@@ -306,6 +312,9 @@ function App() {
   const activeRoughCutPlanItem = roughCutPlanPresentation.items.find(
     (item) => item.item.id === activeRoughCutPlanItemId,
   ) ?? null
+  const previewRoughCutPlanItem = roughCutPlanPresentation.items.find(
+    (item) => item.item.id === previewRoughCutPlanItemId,
+  ) ?? activeRoughCutPlanItem
   const selectedComputedClip = inspectorSelection?.computedClip ?? null
   const canRippleDelete = useMemo(
     () => canRippleDeleteTimelineItem(
@@ -322,7 +331,7 @@ function App() {
 	  const activeHelpContent = openHelpId ? helpContent[openHelpId] : null
 
   useProjectAnalysisPipeline({
-    sourceAssetId: primaryMediaBinding?.asset.id ?? null,
+    sourceAssetId: primaryMediaAsset?.id ?? null,
     primaryItem: primaryMediaItem,
     analysis: projectAnalysis,
     onStart: startProjectAnalysis,
@@ -363,9 +372,8 @@ function App() {
     )
     const candidateFile = Array.from(files).find(
       (file) => isVideoFile(file) &&
-        file.name === primaryMediaItem?.filename &&
-        file.size === primaryMediaItem.size &&
-        file.lastModified === primaryMediaItem.lastModified,
+        primaryMediaItem &&
+        matchesPersistedMediaFile(primaryMediaItem, file),
     )
 
     if (primaryNeedsReconnect && candidateFile) {
@@ -557,8 +565,15 @@ function App() {
     item: RoughCutPlanItemPresentation,
   ) => {
     setActiveRoughCutPlanItemId(item.item.id)
+    setPreviewRoughCutPlanItemId(null)
     handleAnalysisSeek(item.seekTarget)
   }, [handleAnalysisSeek])
+
+  const handleRoughCutPlanItemPreview = useCallback((
+    item: RoughCutPlanItemPresentation | null,
+  ) => {
+    setPreviewRoughCutPlanItemId(item?.item.id ?? null)
+  }, [])
 
   const handleApplyRoughCut = useCallback(() => {
     const result = applyRoughCut(
@@ -717,8 +732,8 @@ function App() {
           expandedStageIds={projectState.expandedStageIds}
           mediaItems={mediaItems}
           activeMediaItemId={activeMediaItemId}
-          primaryAsset={primaryMediaBinding?.asset ?? null}
-          referenceAsset={referenceMediaBinding?.asset ?? null}
+          primaryAsset={primaryMediaAsset}
+          referenceAsset={referenceMediaAsset}
           primaryMediaItemId={primaryMediaItemId}
           referenceMediaItemId={referenceMediaItemId}
           analysis={projectAnalysis}
@@ -758,7 +773,7 @@ function App() {
         />
 			        <VideoWorkspace
             primaryItem={analyzedPrimaryMediaItem}
-            hasPrimaryAsset={Boolean(primaryMediaBinding)}
+            hasPrimaryAsset={Boolean(primaryMediaAsset)}
             sourcePreviewItem={activeMediaItem}
 	          outputSettings={outputSettings}
 	          selectedSubstage={selectedSubstage}
@@ -777,10 +792,13 @@ function App() {
             }
             activeRoughCutPlanItemId={activeRoughCutPlanItemId}
             activeAnalysisTranscriptSegmentId={
-              activeRoughCutPlanItem?.relatedTranscriptSegmentId ?? null
+              previewRoughCutPlanItem?.relatedTranscriptSegmentId ?? null
             }
             activeAnalysisSilenceId={
-              activeRoughCutPlanItem?.item.analysisSourceId ?? null
+              previewRoughCutPlanItem?.item.analysisSourceId ?? null
+            }
+            activeAnalysisSceneId={
+              previewRoughCutPlanItem?.relatedSceneId ?? null
             }
             selectedAISuggestionIds={selectedSuggestionIds}
             activeAISuggestionId={activeSuggestionId}
@@ -794,6 +812,7 @@ function App() {
             onTimelinePreviewRequest={handleTimelinePreviewRequest}
             onAnalysisSeek={handleAnalysisSeek}
             onRoughCutPlanItemActivate={handleRoughCutPlanItemActivate}
+            onRoughCutPlanItemPreview={handleRoughCutPlanItemPreview}
             onRoughCutPlanItemStatusChange={setRoughCutPlanItemStatus}
             onAllRoughCutPlanItemsStatusChange={setAllRoughCutPlanItemsStatus}
             onRestoreRoughCutPlanDefaults={restoreRoughCutPlanDefaults}

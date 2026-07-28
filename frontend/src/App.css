@@ -1094,11 +1094,18 @@ textarea:focus-visible {
 
 .rough-cut-plan-note,
 .rough-cut-plan-empty,
-.rough-cut-plan-progress {
+.rough-cut-plan-progress,
+.rough-cut-plan-best {
   margin: 0;
   color: var(--text-muted);
   font-size: 12px;
   line-height: 1.45;
+}
+
+.rough-cut-plan-best {
+  border-left: 3px solid var(--accent);
+  padding-left: 8px;
+  color: var(--text);
 }
 
 .rough-cut-plan-note {
@@ -1219,8 +1226,17 @@ textarea:focus-visible {
   border-left-color: var(--warning);
 }
 
+.rough-cut-plan-item[data-priority='medium'] {
+  border-left-color: var(--focus);
+}
+
 .rough-cut-plan-item[data-priority='highest'] {
   border-left-color: var(--danger);
+}
+
+.rough-cut-plan-item:hover,
+.rough-cut-plan-item:focus-within {
+  border-color: var(--focus);
 }
 
 .rough-cut-plan-item[data-active='true'] {
@@ -1287,7 +1303,8 @@ textarea:focus-visible {
 .rough-cut-plan-item-meta,
 .rough-cut-plan-item-explanation,
 .rough-cut-plan-item-unavailable,
-.rough-cut-plan-review-label {
+.rough-cut-plan-review-label,
+.rough-cut-plan-impact {
   color: var(--text-muted);
   font-size: 11px;
   line-height: 1.35;
@@ -1299,6 +1316,42 @@ textarea:focus-visible {
 
 .rough-cut-plan-item-explanation {
   color: var(--text);
+}
+
+.rough-cut-plan-speech-context {
+  display: grid;
+  gap: 3px;
+  margin-top: 3px;
+  border-left: 2px solid var(--border-strong);
+  padding-left: 8px;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.rough-cut-plan-speech-context > span:first-child {
+  color: var(--text);
+  font-style: italic;
+}
+
+.rough-cut-plan-speech-context strong {
+  color: var(--text-strong);
+  font-size: 11px;
+}
+
+.rough-cut-plan-speech-context small {
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.rough-cut-plan-context-arrow {
+  color: var(--accent-strong);
+  line-height: 1;
+}
+
+.rough-cut-plan-impact {
+  color: var(--text-strong);
+  font-weight: 750;
 }
 
 .rough-cut-plan-item-unavailable {
@@ -2280,6 +2333,13 @@ textarea:focus-visible {
   width: 0;
   border-left: 1px dashed var(--focus);
   opacity: 0.8;
+}
+
+.timeline-analysis-overlay[data-analysis-marker='scene-boundary'][data-active='true'] {
+  border-left-width: 3px;
+  border-left-style: solid;
+  border-left-color: var(--accent);
+  opacity: 1;
 }
 
 .timeline-analysis-overlay[data-analysis-marker='silence-range'] {

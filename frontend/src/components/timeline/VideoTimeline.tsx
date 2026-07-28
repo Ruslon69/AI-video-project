@@ -73,6 +73,7 @@ type VideoTimelineProps = {
   clipThumbnailPresentations: Record<string, TimelineClipThumbnailPresentation>
   analysisOverlays: AnalysisTimelineOverlay[]
   activeAnalysisSilenceId: string | null
+  activeAnalysisSceneId: string | null
   selectedAISuggestionIds: string[]
   activeAISuggestionId: string | null
   selectedTimelineItemId: string | null
@@ -204,6 +205,7 @@ export function VideoTimeline({
   clipThumbnailPresentations,
   analysisOverlays,
   activeAnalysisSilenceId,
+  activeAnalysisSceneId,
   selectedAISuggestionIds,
   activeAISuggestionId,
   selectedTimelineItemId,
@@ -540,6 +542,7 @@ export function VideoTimeline({
                 overlays={analysisOverlays}
                 geometry={geometry}
                 activeSilenceId={activeAnalysisSilenceId}
+                activeSceneId={activeAnalysisSceneId}
               />
             ) : null}
             <TimelinePlayhead
@@ -608,10 +611,12 @@ function TimelineAnalysisOverlays({
   overlays,
   geometry,
   activeSilenceId,
+  activeSceneId,
 }: {
   overlays: AnalysisTimelineOverlay[]
   geometry: TimelineGeometry
   activeSilenceId: string | null
+  activeSceneId: string | null
 }) {
   return (
     <div className="timeline-analysis-overlay-layer" aria-hidden="true">
@@ -621,8 +626,13 @@ function TimelineAnalysisOverlays({
           className="timeline-analysis-overlay"
           data-analysis-marker={overlay.kind}
           data-active={
-            overlay.kind === 'silence-range' &&
-            overlay.sourceId === activeSilenceId
+            (
+              overlay.kind === 'silence-range' &&
+              overlay.sourceId === activeSilenceId
+            ) || (
+              overlay.kind === 'scene-boundary' &&
+              overlay.sourceId === activeSceneId
+            )
               ? true
               : undefined
           }

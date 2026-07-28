@@ -75,6 +75,7 @@ type VideoWorkspaceProps = {
   activeRoughCutPlanItemId: string | null
   activeAnalysisTranscriptSegmentId: number | null
   activeAnalysisSilenceId: string | null
+  activeAnalysisSceneId: string | null
   selectedAISuggestionIds: string[]
   activeAISuggestionId: string | null
   selectedTimelineItemId: string | null
@@ -87,6 +88,9 @@ type VideoWorkspaceProps = {
   onTimelinePreviewRequest: () => void
   onAnalysisSeek: (target: AnalysisSeekTarget) => void
   onRoughCutPlanItemActivate: (item: RoughCutPlanItemPresentation) => void
+  onRoughCutPlanItemPreview: (
+    item: RoughCutPlanItemPresentation | null,
+  ) => void
   onRoughCutPlanItemStatusChange: (
     itemId: string,
     status: RoughCutPlanItemReviewStatus,
@@ -137,6 +141,7 @@ export function VideoWorkspace({
   activeRoughCutPlanItemId,
   activeAnalysisTranscriptSegmentId,
   activeAnalysisSilenceId,
+  activeAnalysisSceneId,
   selectedAISuggestionIds,
   activeAISuggestionId,
   selectedTimelineItemId,
@@ -149,6 +154,7 @@ export function VideoWorkspace({
   onTimelinePreviewRequest,
   onAnalysisSeek,
   onRoughCutPlanItemActivate,
+  onRoughCutPlanItemPreview,
   onRoughCutPlanItemStatusChange,
   onAllRoughCutPlanItemsStatusChange,
   onRestoreRoughCutPlanDefaults,
@@ -205,6 +211,7 @@ export function VideoWorkspace({
         clipThumbnailPresentations={clipThumbnailPresentations}
         analysisTimelineOverlays={analysisTimelineOverlays}
         activeAnalysisSilenceId={activeAnalysisSilenceId}
+        activeAnalysisSceneId={activeAnalysisSceneId}
         selectedAISuggestionIds={selectedAISuggestionIds}
         activeAISuggestionId={activeAISuggestionId}
         selectedTimelineItemId={selectedTimelineItemId}
@@ -231,12 +238,14 @@ export function VideoWorkspace({
         onSeek={onAnalysisSeek}
         activeTranscriptSegmentId={activeAnalysisTranscriptSegmentId}
         activePauseId={activeAnalysisSilenceId}
+        activeSceneId={activeAnalysisSceneId}
       />
       <RoughCutPlanPanel
         presentation={roughCutPlanPresentation}
         activeItemId={activeRoughCutPlanItemId}
         canRebuild={Boolean(analysis)}
         onActivate={onRoughCutPlanItemActivate}
+        onPreviewChange={onRoughCutPlanItemPreview}
         onItemStatusChange={onRoughCutPlanItemStatusChange}
         onAllStatusChange={onAllRoughCutPlanItemsStatusChange}
         onRestoreDefaults={onRestoreRoughCutPlanDefaults}
@@ -266,6 +275,7 @@ function MediaPreview({
   clipThumbnailPresentations,
   analysisTimelineOverlays,
   activeAnalysisSilenceId,
+  activeAnalysisSceneId,
   selectedAISuggestionIds,
   activeAISuggestionId,
   selectedTimelineItemId,
@@ -294,6 +304,7 @@ function MediaPreview({
   clipThumbnailPresentations: Record<string, TimelineClipThumbnailPresentation>
   analysisTimelineOverlays: AnalysisTimelineOverlay[]
   activeAnalysisSilenceId: string | null
+  activeAnalysisSceneId: string | null
   selectedAISuggestionIds: string[]
   activeAISuggestionId: string | null
   selectedTimelineItemId: string | null
@@ -467,6 +478,7 @@ function MediaPreview({
           clipThumbnailPresentations={clipThumbnailPresentations}
           analysisOverlays={analysisTimelineOverlays}
           activeAnalysisSilenceId={activeAnalysisSilenceId}
+          activeAnalysisSceneId={activeAnalysisSceneId}
           selectedAISuggestionIds={selectedAISuggestionIds}
           activeAISuggestionId={activeAISuggestionId}
           selectedTimelineItemId={selectedTimelineItemId}

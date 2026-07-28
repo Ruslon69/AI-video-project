@@ -27,6 +27,7 @@ export function AnalysisReviewPanel({
   onSeek,
   activeTranscriptSegmentId,
   activePauseId,
+  activeSceneId,
 }: {
   analysis: ProjectAnalysis | null
   presentation: AnalysisReviewPresentation
@@ -35,6 +36,7 @@ export function AnalysisReviewPanel({
   onSeek: (target: AnalysisSeekTarget) => void
   activeTranscriptSegmentId: number | null
   activePauseId: string | null
+  activeSceneId: string | null
 }) {
   const [activeTab, setActiveTab] = useState<ReviewTab>('transcript')
   const panelRef = useRef<HTMLElement | null>(null)
@@ -51,6 +53,7 @@ export function AnalysisReviewPanel({
         panelRef={panelRef}
         selectedTranscriptSegmentId={activeTranscriptSegmentId}
         selectedPauseId={activePauseId}
+        selectedSceneId={activeSceneId}
         activeTab={activeTab}
       />
       <div className="analysis-review-head">
@@ -283,6 +286,7 @@ function AnalysisReviewPlaybackHighlights({
   panelRef,
   selectedTranscriptSegmentId,
   selectedPauseId,
+  selectedSceneId,
   activeTab,
 }: {
   analysis: ProjectAnalysis | null
@@ -290,6 +294,7 @@ function AnalysisReviewPlaybackHighlights({
   panelRef: RefObject<HTMLElement | null>
   selectedTranscriptSegmentId: number | null
   selectedPauseId: string | null
+  selectedSceneId: string | null
   activeTab: ReviewTab
 }) {
   const { currentTime } = usePlaybackState()
@@ -309,10 +314,11 @@ function AnalysisReviewPlaybackHighlights({
       const transcriptSegmentId =
         selectedTranscriptSegmentId ?? active.transcriptSegmentId
       const pauseId = selectedPauseId ?? active.pauseId
+      const sceneId = selectedSceneId ?? active.sceneId
       const isActive =
         (kind === 'transcript' && id === String(transcriptSegmentId)) ||
         (kind === 'pause' && id === pauseId) ||
-        (kind === 'scene' && id === active.sceneId)
+        (kind === 'scene' && id === sceneId)
 
       if (isActive) {
         row.dataset.active = 'true'
@@ -327,6 +333,7 @@ function AnalysisReviewPlaybackHighlights({
     panelRef,
     projection,
     selectedPauseId,
+    selectedSceneId,
     selectedTranscriptSegmentId,
   ])
 

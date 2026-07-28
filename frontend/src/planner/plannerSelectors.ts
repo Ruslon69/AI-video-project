@@ -20,18 +20,46 @@ const reasonLabels: Record<RoughCutPlanReason, string> = {
   medium_pause: 'Пауза средней длины',
   long_pause: 'Длинная пауза',
   extended_silence: 'Продолжительная тишина',
+  pause_after_completed_thought: 'Пауза после завершённой мысли',
+  long_silence_after_sentence: 'Длинная пауза после законченной фразы',
+  silence_between_scene_blocks: 'Пауза между сценами',
+  silence_after_sentence_between_scenes:
+    'Длинная пауза после фразы между сценами',
+  extended_silence_without_speech: 'Продолжительная тишина без речи',
+  extended_silence_after_unfinished_phrase:
+    'Длинная пауза после незавершённой фразы',
+  pause_after_unfinished_phrase: 'Пауза после незавершённой фразы',
+  speech_break_for_review: 'Пауза в речи для проверки',
 }
 
 const explanationLabels: Record<RoughCutPlanReason, string> = {
   medium_pause: 'Можно убрать, если хочется сделать речь плотнее.',
   long_pause: 'Заметная пауза, которая может замедлять темп.',
   extended_silence: 'Длинный участок без речи, подходящий для проверки.',
+  pause_after_completed_thought:
+    'Речь закончена перед паузой, поэтому склейка должна звучать естественно.',
+  long_silence_after_sentence:
+    'После законченного предложения обнаружен длинный участок тишины.',
+  silence_between_scene_blocks:
+    'Пауза находится рядом с границей сцен и отделяет два смысловых блока.',
+  silence_after_sentence_between_scenes:
+    'Законченная фраза и смена сцены дают надёжную точку для сокращения.',
+  extended_silence_without_speech:
+    'Длинный участок тишины найден без достаточного речевого контекста.',
+  extended_silence_after_unfinished_phrase:
+    'Пауза длинная, но фраза выглядит незавершённой — склейку нужно проверить.',
+  pause_after_unfinished_phrase:
+    'Речь продолжается после паузы, поэтому предложение имеет низкий приоритет.',
+  speech_break_for_review:
+    'Пауза заметна, но фраза выглядит незавершённой — решение лучше проверить.',
 }
 
 const priorityLabels: Record<RoughCutPlanItemPriority, string> = {
+  ignore: 'Игнорировать',
   low: 'Низкий приоритет',
+  medium: 'Средний приоритет',
   high: 'Высокий приоритет',
-  highest: 'Наивысший приоритет',
+  highest: 'Высокий приоритет',
 }
 
 const reviewStatusLabels: Record<RoughCutPlanItemReviewStatus, string> = {
@@ -49,6 +77,9 @@ export type RoughCutPlanItemPresentation = Readonly<{
   confidencePercent: number
   seekTarget: AnalysisSeekTarget
   relatedTranscriptSegmentId: number | null
+  relatedSceneId: string | null
+  precedingSpeechContext: string | null
+  followingSpeechContext: string | null
 }>
 
 export type RoughCutPlanSummary = Readonly<{
@@ -56,8 +87,12 @@ export type RoughCutPlanSummary = Readonly<{
   suggestionCount: number
   averageConfidence: number
   warningCount: number
-  longestPause: number
-  averagePauseDuration: number
+  ignoredPauseCount: number
+  highestConfidenceSuggestion: Readonly<{
+    itemId: string
+    reasonLabel: string
+    confidence: number
+  }> | null
   byPriority: Record<RoughCutPlanItemPriority, number>
 }>
 
@@ -109,6 +144,12 @@ export function getRoughCutPlanPresentation(
         analysis,
         item,
       ),
+      relatedSceneId: item.speechContext?.relatedSceneId ??
+        getRelatedSceneId(analysis, item),
+      precedingSpeechContext:
+        item.speechContext?.precedingText ?? null,
+      followingSpeechContext:
+        item.speechContext?.followingText ?? null,
     })),
   }
 }
@@ -139,24 +180,57 @@ export function getRoughCutExecutionPresentation(
 }
 
 export function getRoughCutPlanSummary(plan: RoughCutPlan): RoughCutPlanSummary {
-  const durations = plan.items.map((item) => item.duration)
+  const highestConfidenceItem = [...plan.items].sort(
+    (left, right) =>
+      right.confidence - left.confidence ||
+      right.duration - left.duration ||
+      left.id.localeCompare(right.id),
+  )[0]
 
   return {
     estimatedTimeSaved: plan.estimatedTimeSaved,
     suggestionCount: plan.totalCandidateCount,
     averageConfidence: plan.confidenceSummary.average,
     warningCount: plan.confidenceSummary.warningCount,
-    longestPause: durations.length ? Math.max(...durations) : 0,
-    averagePauseDuration: durations.length
-      ? durations.reduce((total, duration) => total + duration, 0) /
-        durations.length
-      : 0,
+    ignoredPauseCount: plan.ignoredPauseCount ?? 0,
+    highestConfidenceSuggestion: highestConfidenceItem
+      ? {
+          itemId: highestConfidenceItem.id,
+          reasonLabel: reasonLabels[highestConfidenceItem.reason],
+          confidence: highestConfidenceItem.confidence,
+        }
+      : null,
     byPriority: {
+      ignore: plan.items.filter((item) => item.priority === 'ignore').length,
       low: plan.items.filter((item) => item.priority === 'low').length,
+      medium: plan.items.filter((item) => item.priority === 'medium').length,
       high: plan.items.filter((item) => item.priority === 'high').length,
       highest: plan.items.filter((item) => item.priority === 'highest').length,
     },
   }
+}
+
+function getRelatedSceneId(
+  analysis: ProjectAnalysis,
+  item: RoughCutPlanItem,
+) {
+  const midpoint = item.sourceStart + item.duration / 2
+  const nearestScene = analysis.scenes
+    .map((scene) => ({
+      scene,
+      distance: getPointRangeDistance(
+        midpoint,
+        scene.start,
+        scene.end,
+      ),
+    }))
+    .sort((left, right) => (
+      left.distance - right.distance ||
+      left.scene.start - right.scene.start ||
+      left.scene.id.localeCompare(right.scene.id)
+    ))[0]
+
+  return nearestScene?.scene.id ?? null
 }
 
 function getRelatedTranscriptSegmentId(
@@ -194,6 +268,22 @@ function getRangeDistance(
 
   if (rightEnd < leftStart) {
     return leftStart - rightEnd
+  }
+
+  return 0
+}
+
+function getPointRangeDistance(
+  timestamp: number,
+  start: number,
+  end: number,
+) {
+  if (timestamp < start) {
+    return start - timestamp
+  }
+
+  if (timestamp > end) {
+    return timestamp - end
   }
 
   return 0

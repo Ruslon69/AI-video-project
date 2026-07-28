@@ -7,24 +7,22 @@ import type {
   RoughCutPlanItemReviewStatus,
   RoughCutPlanReason,
 } from './models'
+import {
+  evaluatePauseForRoughCut,
+  roughCutPlannerRules,
+} from './SpeechPauseEvaluator'
 
-export const roughCutPlannerRules = {
-  minimumPauseSeconds: 0.75,
-  longPauseSeconds: 2.5,
-  veryLongPauseSeconds: 5,
-  confidenceFloor: 0.55,
-  confidenceCeiling: 0.95,
-  confidenceWarningThreshold: 0.65,
-} as const
+export { roughCutPlannerRules } from './SpeechPauseEvaluator'
 
 export function createRoughCutPlan(
   analysis: ProjectAnalysis,
   createdAt: string,
 ): RoughCutPlan {
-  const items = analysis.silences
-    .filter((silence) =>
-      silence.duration >= roughCutPlannerRules.minimumPauseSeconds,
-    )
+  const evaluations = analysis.silences.map((silence) =>
+    evaluatePauseForRoughCut(analysis, silence),
+  )
+  const items = evaluations
+    .filter((evaluation) => evaluation.priority !== 'ignore')
     .map(createPausePlanItem)
     .sort((left, right) => (
       left.sourceStart - right.sourceStart ||
@@ -32,8 +30,8 @@ export function createRoughCutPlan(
     ))
 
   return summarizePlan({
-    schemaVersion: '1.0',
-    plannerVersion: 'rough-cut-planner-v1',
+    schemaVersion: '2.0',
+    plannerVersion: 'rough-cut-planner-v2',
     id: createPlanId(analysis),
     createdAt,
     primaryAssetId: analysis.sourceAssetId,
@@ -49,6 +47,8 @@ export function createRoughCutPlan(
     confidenceSummary: getConfidenceSummary(items),
     items,
     execution: null,
+    evaluatedPauseCount: evaluations.length,
+    ignoredPauseCount: evaluations.length - items.length,
   })
 }
 
@@ -114,8 +114,14 @@ export function isRoughCutPlanForAnalysis(
   plan: RoughCutPlan | null | undefined,
   analysis: ProjectAnalysis,
 ) {
-  return plan?.schemaVersion === '1.0' &&
+  const isCurrentPlanner = plan?.schemaVersion === '2.0' &&
+    plan.plannerVersion === 'rough-cut-planner-v2'
+  const isPreviouslyAppliedLegacyPlan =
+    plan?.schemaVersion === '1.0' &&
     plan.plannerVersion === 'rough-cut-planner-v1' &&
+    plan.execution?.status === 'applied'
+
+  return (isCurrentPlanner || isPreviouslyAppliedLegacyPlan) &&
     plan.primaryAssetId === analysis.sourceAssetId &&
     plan.analysisSchemaVersion === analysis.schemaVersion &&
     plan.analysisPipelineVersion === analysis.pipelineVersion &&
@@ -129,8 +135,15 @@ export function isRoughCutPlan(value: unknown): value is RoughCutPlan {
 
   const plan = value as Partial<RoughCutPlan>
 
-  return plan.schemaVersion === '1.0' &&
-    plan.plannerVersion === 'rough-cut-planner-v1' &&
+  const isKnownVersion = (
+    plan.schemaVersion === '1.0' &&
+    plan.plannerVersion === 'rough-cut-planner-v1'
+  ) || (
+    plan.schemaVersion === '2.0' &&
+    plan.plannerVersion === 'rough-cut-planner-v2'
+  )
+
+  return isKnownVersion &&
     typeof plan.id === 'string' &&
     typeof plan.createdAt === 'string' &&
     typeof plan.primaryAssetId === 'string' &&
@@ -138,26 +151,26 @@ export function isRoughCutPlan(value: unknown): value is RoughCutPlan {
     typeof plan.analysisPipelineVersion === 'string' &&
     typeof plan.analysisGeneratedAt === 'string' &&
     isPlanExecution(plan.execution) &&
+    (
+      plan.plannerVersion === 'rough-cut-planner-v1' ||
+      (
+        typeof plan.evaluatedPauseCount === 'number' &&
+        typeof plan.ignoredPauseCount === 'number' &&
+        plan.evaluatedPauseCount >= plan.ignoredPauseCount
+      )
+    ) &&
     Array.isArray(plan.items) &&
     plan.items.every((item) => (
       typeof item.id === 'string' &&
       typeof item.sourceCandidateId === 'string' &&
       typeof item.analysisSourceId === 'string' &&
       item.analysisSource === 'silence' &&
-      (
-        item.reason === 'medium_pause' ||
-        item.reason === 'long_pause' ||
-        item.reason === 'extended_silence'
-      ) &&
+      isPlanReason(item.reason) &&
       typeof item.sourceStart === 'number' &&
       typeof item.sourceEnd === 'number' &&
       typeof item.duration === 'number' &&
       typeof item.confidence === 'number' &&
-      (
-        item.priority === 'low' ||
-        item.priority === 'high' ||
-        item.priority === 'highest'
-      ) &&
+      isPlanPriority(item.priority) &&
       isReviewStatus(item.reviewStatus) &&
       isReviewStatus(item.defaultReviewStatus) &&
       (
@@ -165,8 +178,78 @@ export function isRoughCutPlan(value: unknown): value is RoughCutPlan {
         item.executionStatus === 'applied' ||
         item.executionStatus === 'skipped'
       ) &&
-      typeof item.estimatedImpactSeconds === 'number'
+      typeof item.estimatedImpactSeconds === 'number' &&
+      (
+        plan.plannerVersion === 'rough-cut-planner-v1' ||
+        (
+          isSignalScores(item.signalScores) &&
+          isSpeechContext(item.speechContext)
+        )
+      )
     ))
+}
+
+function isPlanReason(value: unknown): value is RoughCutPlanReason {
+  return value === 'medium_pause' ||
+    value === 'long_pause' ||
+    value === 'extended_silence' ||
+    value === 'pause_after_completed_thought' ||
+    value === 'long_silence_after_sentence' ||
+    value === 'silence_between_scene_blocks' ||
+    value === 'silence_after_sentence_between_scenes' ||
+    value === 'extended_silence_without_speech' ||
+    value === 'extended_silence_after_unfinished_phrase' ||
+    value === 'pause_after_unfinished_phrase' ||
+    value === 'speech_break_for_review'
+}
+
+function isPlanPriority(value: unknown): value is RoughCutPlanItemPriority {
+  return value === 'ignore' ||
+    value === 'low' ||
+    value === 'medium' ||
+    value === 'high' ||
+    value === 'highest'
+}
+
+function isSignalScores(value: unknown) {
+  if (typeof value !== 'object' || value === null) {
+    return false
+  }
+
+  const scores = value as Record<string, unknown>
+
+  return ['pause', 'speechConfidence', 'sentenceCompletion', 'scene'].every(
+    (key) => typeof scores[key] === 'number',
+  )
+}
+
+function isSpeechContext(value: unknown) {
+  if (typeof value !== 'object' || value === null) {
+    return false
+  }
+
+  const context = value as Record<string, unknown>
+
+  return (
+    context.precedingText === null ||
+    typeof context.precedingText === 'string'
+  ) && (
+    context.followingText === null ||
+    typeof context.followingText === 'string'
+  ) && (
+    context.precedingTranscriptSegmentId === null ||
+    typeof context.precedingTranscriptSegmentId === 'number'
+  ) && (
+    context.followingTranscriptSegmentId === null ||
+    typeof context.followingTranscriptSegmentId === 'number'
+  ) && (
+    context.relatedSceneId === null ||
+    typeof context.relatedSceneId === 'string'
+  ) && (
+    context.sentenceCompletion === 'completed' ||
+    context.sentenceCompletion === 'continuation' ||
+    context.sentenceCompletion === 'unknown'
+  )
 }
 
 function isPlanExecution(value: RoughCutPlan['execution'] | unknown) {
@@ -200,65 +283,28 @@ function isReviewStatus(value: unknown) {
 }
 
 function createPausePlanItem(
-  silence: ProjectAnalysis['silences'][number],
+  evaluation: ReturnType<typeof evaluatePauseForRoughCut>,
 ): RoughCutPlanItem {
-  const priority = getPausePriority(silence.duration)
+  const { silence } = evaluation
 
   return {
     id: `rough-cut-item:${silence.id}`,
     sourceCandidateId: `analysis-silence-${silence.id}`,
     analysisSourceId: silence.id,
     analysisSource: 'silence',
-    reason: getPauseReason(priority),
+    reason: evaluation.reason ?? 'speech_break_for_review',
     sourceStart: silence.start,
     sourceEnd: silence.end,
     duration: silence.duration,
-    confidence: getPauseConfidence(silence.duration),
-    priority,
+    confidence: evaluation.confidence,
+    priority: evaluation.priority,
     reviewStatus: 'pending',
     defaultReviewStatus: 'pending',
     executionStatus: 'not-applied',
     estimatedImpactSeconds: silence.duration,
+    signalScores: evaluation.signalScores,
+    speechContext: evaluation.speechContext,
   }
-}
-
-function getPausePriority(duration: number): RoughCutPlanItemPriority {
-  if (duration >= roughCutPlannerRules.veryLongPauseSeconds) {
-    return 'highest'
-  }
-
-  return duration >= roughCutPlannerRules.longPauseSeconds ? 'high' : 'low'
-}
-
-function getPauseReason(priority: RoughCutPlanItemPriority): RoughCutPlanReason {
-  if (priority === 'highest') {
-    return 'extended_silence'
-  }
-
-  return priority === 'high' ? 'long_pause' : 'medium_pause'
-}
-
-// V1 confidence uses pause duration only: 0.55 + 0.40 times normalized
-// duration between the minimum and very-long thresholds, capped at 0.95.
-function getPauseConfidence(duration: number) {
-  const normalizedDuration = clamp(
-    (duration - roughCutPlannerRules.minimumPauseSeconds) /
-      (
-        roughCutPlannerRules.veryLongPauseSeconds -
-        roughCutPlannerRules.minimumPauseSeconds
-      ),
-    0,
-    1,
-  )
-
-  return roundConfidence(
-    roughCutPlannerRules.confidenceFloor +
-      normalizedDuration *
-        (
-          roughCutPlannerRules.confidenceCeiling -
-          roughCutPlannerRules.confidenceFloor
-        ),
-  )
 }
 
 function summarizePlan(plan: RoughCutPlan): RoughCutPlan {
@@ -329,10 +375,6 @@ function createPlanId(analysis: ProjectAnalysis) {
     analysis.pipelineVersion,
     analysis.generatedAt,
   ].join(':')
-}
-
-function clamp(value: number, minimum: number, maximum: number) {
-  return Math.min(Math.max(value, minimum), maximum)
 }
 
 function roundConfidence(value: number) {

@@ -198,7 +198,7 @@ export function ProjectSidebar({
             <span>Главное видео</span>
             <strong>{primaryAsset?.filename ?? 'Не выбрано'}</strong>
             <small>
-              {primaryMediaItemId
+              {primaryAsset
                 ? 'Единственный источник для таймлайна.'
                 : 'Выберите видео, которое хотите смонтировать.'}
             </small>
@@ -238,7 +238,7 @@ export function ProjectSidebar({
         >
           {isPrimarySourceConnecting
             ? 'Подключаем видео...'
-            : primaryMediaItemId
+            : primaryAsset
               ? 'Добавить видео'
               : 'Выбрать главное видео'}
         </button>
